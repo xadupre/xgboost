@@ -262,6 +262,41 @@ class GBTree : public GradientBooster {
                     &thread_temp[0], 0, ntree_limit) + base_margin_;
     }
   }
+  
+  /// ADDITION 
+  
+  void PredictNoInsideCache(const SparseBatch::Inst &inst,
+                            std::vector<float>& out_preds,
+                            std::vector<float>& pred_buffer,
+                            std::vector<unsigned> &pred_counter,
+                            unsigned ntree_limit,
+                            unsigned root_index) override {
+    RegTree::FVec thread_cache[1];
+    thread_cache[0] = RegTree::FVec();
+    thread_cache[0].Init(mparam.num_feature);
+    DCHECK(out_preds.size() == mparam.num_output_group * (mparam.size_leaf_vector + 1)) << "Size are different.";
+    ntree_limit *= mparam.num_output_group;
+    if (ntree_limit == 0 || ntree_limit > trees.size()) {
+      ntree_limit = static_cast<unsigned>(trees.size());
+    }
+    // loop over output groups
+    for (int gid = 0; gid < mparam.num_output_group; ++gid) {
+      out_preds[gid] =
+          PredValue(inst, gid, root_index,
+          &thread_cache[0], 0, ntree_limit) + base_margin_;
+    }
+  }
+
+  void PredictOutputSize(const SparseBatch::Inst &inst,
+                         xgboost::bst_ulong &len,
+                         xgboost::bst_ulong& out_size_buffer,
+                          unsigned ntree_limit,
+                          unsigned root_index) override {
+    len = mparam.num_output_group * (mparam.size_leaf_vector + 1);
+    out_size_buffer = 0;
+  }
+  
+  // END
 
   void PredictLeaf(DMatrix* p_fmat,
                    std::vector<float>* out_preds,
@@ -534,7 +569,7 @@ class Dart : public GBTree {
   void Predict(DMatrix* p_fmat,
                std::vector<float>* out_preds,
                unsigned ntree_limit) override {
-    DropTrees(ntree_limit);
+    DropTrees(ntree_limit, _idx_drop);
     PredLoopInternal<Dart>(p_fmat, out_preds, 0, ntree_limit, true);
   }
 
@@ -542,7 +577,7 @@ class Dart : public GBTree {
                std::vector<float>* out_preds,
                unsigned ntree_limit,
                unsigned root_index) override {
-    DropTrees(1);
+    DropTrees(1, _idx_drop);
     if (thread_temp.size() == 0) {
       thread_temp.resize(1, RegTree::FVec());
       thread_temp[0].Init(mparam.num_feature);
@@ -559,6 +594,47 @@ class Dart : public GBTree {
                       &thread_temp[0], 0, ntree_limit) + base_margin_;
     }
   }
+  
+  // ADDITION
+  
+  void PredictNoInsideCache(const SparseBatch::Inst &inst,
+                            std::vector<float>& out_preds,
+                            std::vector<float> &pred_buffer,
+                            std::vector<unsigned> &pred_counter,
+                            unsigned ntree_limit,
+                            unsigned root_index) override {
+    std::vector<size_t> idx_drop;
+    RegTree::FVec thread_cache[1];
+    thread_cache[0] = RegTree::FVec();
+    thread_cache[0].Init(mparam.num_feature);
+    //DropTrees(ntree_limit, idx_drop);
+    DCHECK(out_preds.size() == mparam.num_output_group * (mparam.size_leaf_vector + 1)) << "Size are different.";
+    ntree_limit *= mparam.num_output_group;
+    if (ntree_limit == 0 || ntree_limit > trees.size()) {
+      ntree_limit = static_cast<unsigned>(trees.size());
+    }
+    // loop over output groups
+    ntree_limit *= mparam.num_output_group;
+    if (ntree_limit == 0 || ntree_limit > trees.size()) {
+      ntree_limit = static_cast<unsigned>(trees.size());
+    }
+    for (int gid = 0; gid < mparam.num_output_group; ++gid) {
+      out_preds[gid]
+        = PredValue(inst, gid, root_index,
+            &thread_cache[0], 0, ntree_limit) + base_margin_;
+    }
+  }
+
+  void PredictOutputSize(const SparseBatch::Inst &inst,
+                          xgboost::bst_ulong &len,
+                          xgboost::bst_ulong& out_size_buffer,
+                          unsigned ntree_limit,
+                          unsigned root_index) override {
+    len = mparam.num_output_group * (mparam.size_leaf_vector + 1);
+    out_size_buffer = 0;
+  }
+  
+  /// END
 
  protected:
   friend class GBTree;
@@ -570,7 +646,7 @@ class Dart : public GBTree {
       tree_info.push_back(bst_group);
     }
     mparam.num_trees += static_cast<int>(new_trees.size());
-    size_t num_drop = NormalizeTrees(new_trees.size());
+    size_t num_drop = NormalizeTrees(new_trees.size(), _idx_drop);
     if (dparam.silent != 1) {
       LOG(INFO) << "drop " << num_drop << " trees, "
                 << "weight = " << weight_drop.back();
@@ -587,7 +663,7 @@ class Dart : public GBTree {
     p_feats->Fill(inst);
     for (size_t i = tree_begin; i < tree_end; ++i) {
       if (tree_info[i] == bst_group) {
-        bool drop = (std::binary_search(idx_drop.begin(), idx_drop.end(), i));
+        bool drop = (std::binary_search(_idx_drop.begin(), _idx_drop.end(), i));
         if (!drop) {
           int tid = trees[i]->GetLeafIndex(*p_feats, root_index);
           psum += weight_drop[i] * (*trees[i])[tid].leaf_value();
@@ -599,7 +675,7 @@ class Dart : public GBTree {
   }
 
   // select dropped trees
-  inline void DropTrees(unsigned ntree_limit_drop) {
+  inline void DropTrees(unsigned ntree_limit_drop, std::vector<size_t> &idx_drop) {
     std::uniform_real_distribution<> runif(0.0, 1.0);
     auto& rnd = common::GlobalRandom();
     // reset
@@ -628,7 +704,7 @@ class Dart : public GBTree {
     }
   }
   // set normalization factors
-  inline size_t NormalizeTrees(size_t size_new_trees) {
+  inline size_t NormalizeTrees(size_t size_new_trees, std::vector<size_t> &idx_drop) {
     float lr = 1.0 * dparam.learning_rate / size_new_trees;
     size_t num_drop = idx_drop.size();
     if (num_drop == 0) {
@@ -667,7 +743,7 @@ class Dart : public GBTree {
   /*! \brief prediction buffer */
   std::vector<float> weight_drop;
   // indexes of dropped trees
-  std::vector<size_t> idx_drop;
+  std::vector<size_t> _idx_drop;
 };
 
 // register the ojective functions

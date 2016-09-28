@@ -96,6 +96,21 @@ class GradientBooster {
                        std::vector<float>* out_preds,
                        unsigned ntree_limit = 0,
                        unsigned root_index = 0) = 0;
+
+  /// ADDITION FOR ONE OFF PREDITON
+  virtual void PredictNoInsideCache(const SparseBatch::Inst& inst,
+                                    std::vector<float>& out_preds,
+                                    std::vector<float> &pred_buffer,
+                                    std::vector<unsigned> &pred_counter,
+                                    unsigned ntree_limit = 0,
+                                    unsigned root_index = 0) = 0;
+  virtual void PredictOutputSize(const SparseBatch::Inst& inst,
+                                 bst_ulong &out_size,
+                                 bst_ulong &out_size_buffer,
+                                 unsigned ntree_limit = 0,
+                                 unsigned root_index = 0) = 0;  
+  /// END
+
   /*!
    * \brief predict the leaf index of each tree, the output will be nsample * ntree vector
    *        this is only valid in gbtree predictor

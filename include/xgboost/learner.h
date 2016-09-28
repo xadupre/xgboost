@@ -168,9 +168,26 @@ class Learner : public rabit::Serializable {
    */
   static Learner* Create(const std::vector<std::shared_ptr<DMatrix> >& cache_data);
 
+  /// ADDITION FOR ONE OFF PREDICTON
+
+  inline void PredictNoInsideCache(const SparseBatch::Inst &inst,
+                                   bool output_margin,
+                                   std::vector<float>& out_preds,
+                                   std::vector<float>& pred_buffer,
+                                   std::vector<unsigned>& pred_counter,
+                                   unsigned ntree_limit = 0) const;
+  inline void PredictOutputSize(const SparseBatch::Inst& inst,
+                                bool output_margin,
+                                bst_ulong &out_size,
+                                bst_ulong &out_size_buffer,
+                                unsigned ntree_limit = 0) const;
+
+  void Learner::PredictNoInsideCacheLOG(const SparseBatch::Inst& inst, bool output_margin, const char *legend = "PredictNoInsideCache") const;
+  void Learner::PredictNoInsideCacheLOG2(std::vector<float> &out_preds, const char *legend = "PredictNoInsideCache") const;
+
+  // END
+
  protected:
-  /*! \brief internal base score of the model */
-  bst_float base_score_;
   /*! \brief objective function */
   std::unique_ptr<ObjFunction> obj_;
   /*! \brief The gradient boosted used by the model*/
@@ -185,13 +202,40 @@ inline void Learner::Predict(const SparseBatch::Inst& inst,
                              std::vector<float>* out_preds,
                              unsigned ntree_limit) const {
   gbm_->Predict(inst, out_preds, ntree_limit);
-  if (out_preds->size() == 1) {
-    (*out_preds)[0] += base_score_;
-  }
   if (!output_margin) {
     obj_->PredTransform(out_preds);
   }
 }
+
+
+/// ADDITION FOR ONE OFF PREDICTION
+
+inline void Learner::PredictNoInsideCache(const SparseBatch::Inst& inst,
+                                          bool output_margin,
+                                          std::vector<float>& out_preds,
+                                          std::vector<float> &pred_buffer,
+                                          std::vector<unsigned> &pred_counter,
+                                          unsigned ntree_limit) const {
+  size_t t = out_preds.size();
+  gbm_->PredictNoInsideCache(inst, out_preds, pred_buffer, pred_counter, ntree_limit);
+
+  CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
+  if (!output_margin) {
+    t = out_preds.size();
+    obj_->PredTransform(&out_preds);
+    CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
+  }
+}
+
+inline void Learner::PredictOutputSize(const SparseBatch::Inst& inst,
+                                      bool output_margin,
+                                      bst_ulong& out_size,
+                                      bst_ulong& out_size_buffer,
+                                      unsigned ntree_limit) const {
+  gbm_->PredictOutputSize(inst, out_size, out_size_buffer, ntree_limit);
+}
+
+/// END
 
 // implementing configure.
 template<typename PairIter>

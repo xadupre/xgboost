@@ -265,7 +265,7 @@ XGB_DLL int XGDMatrixCreateFromCSR(const xgboost::bst_ulong* indptr,
                                    xgboost::bst_ulong nelem,
                                    DMatrixHandle* out) {
   std::vector<size_t> indptr_(nindptr);
-  for (bst_ulong i = 0; i < nindptr; ++i) {
+  for (xgboost::bst_ulong i = 0; i < nindptr; ++i) {
     indptr_[i] = static_cast<size_t>(indptr[i]);
   }
   return XGDMatrixCreateFromCSREx(&indptr_[0], indices, data,
@@ -292,7 +292,7 @@ XGB_DLL int XGDMatrixCreateFromCSCEx(const size_t* col_ptr,
   builder.InitBudget(0, nthread);
   size_t ncol = nindptr - 1;  // NOLINT(*)
   #pragma omp parallel for schedule(static)
-  for (size_t i = 0; i < ncol; ++i) {  // NOLINT(*)
+  for (bst_omp_uint i = 0; i < ncol; ++i) {  // NOLINT(*)
     int tid = omp_get_thread_num();
     for (size_t j = col_ptr[i]; j < col_ptr[i+1]; ++j) {
       builder.AddBudget(indices[j], tid);
@@ -300,7 +300,7 @@ XGB_DLL int XGDMatrixCreateFromCSCEx(const size_t* col_ptr,
   }
   builder.InitStorage();
   #pragma omp parallel for schedule(static)
-  for (size_t i = 0; i < ncol; ++i) {  // NOLINT(*)
+  for (bst_omp_uint i = 0; i < ncol; ++i) {  // NOLINT(*)
     int tid = omp_get_thread_num();
     for (size_t j = col_ptr[i]; j < col_ptr[i+1]; ++j) {
       builder.Push(indices[j],
@@ -326,7 +326,7 @@ XGB_DLL int XGDMatrixCreateFromCSC(const xgboost::bst_ulong* col_ptr,
                                    xgboost::bst_ulong nelem,
                                    DMatrixHandle* out) {
   std::vector<size_t> col_ptr_(nindptr);
-  for (bst_ulong i = 0; i < nindptr; ++i) {
+  for (xgboost::bst_ulong i = 0; i < nindptr; ++i) {
     col_ptr_[i] = static_cast<size_t>(col_ptr[i]);
   }
   return XGDMatrixCreateFromCSCEx(&col_ptr_[0], indices, data,
@@ -616,6 +616,149 @@ XGB_DLL int XGBoosterPredict(BoosterHandle handle,
   *len = static_cast<xgboost::bst_ulong>(preds.size());
   API_END();
 }
+
+/////////////////////////////////////
+// ADDITION TO GET ONE OFF PREDICTION
+/////////////////////////////////////
+
+XGB_DLL int XGBoosterLazyInit(BoosterHandle handle) {
+  API_BEGIN();
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->LazyInit();
+  API_END();
+}
+
+XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
+                                  xgboost::bst_ulong * nb_entries,
+                                  const float * values,
+                                  const int * indices,
+                                  float missing)
+{
+  API_BEGIN();
+  SparseEntry * res = entries;
+  xgboost::bst_ulong new_count = *nb_entries;
+  bool nan_missing = common::CheckNAN(missing);
+  if (indices == NULL) {
+    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values) {
+      if (common::CheckNAN(*values)) {
+        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN"; 
+        --new_count;
+      }
+      else {
+        if (nan_missing || *values != missing) {
+          res->fvalue = *values;
+          res->index = i;
+          ++res;
+        }
+        else --new_count;
+      }
+    }
+  }
+  else {
+    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values, ++indices) {
+      if (common::CheckNAN(*values)) {
+        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN";
+        --new_count;
+      }
+      else {
+        if (nan_missing || *values != missing) {
+          res->fvalue = *values;
+          res->index = *indices;
+          ++res;
+        }
+        else --new_count;
+      }
+    }
+  }
+  *nb_entries = new_count;
+  API_END();
+}
+
+
+/**
+* This class creates a stale vector pointing to the pointer given
+* to the constructor. It is means to be initialized with a pointer allocated
+* by a user based on the size returned by XGBoosterPredictOutputSize.
+* This code is not safe as it crashes if the vector is modified during the prediction.
+* It could be avoided but an extra allocation would be required.
+*/
+template <typename T>
+class vector_stale : public std::vector<T>
+{
+  public:
+  vector_stale(const T* begin, size_type size) throw() : std::vector<T>() 
+  { 
+    // We initialize the vector to a buffer,
+    // There should not be any allocation, resizing or deallocation.
+    // Otherwise the program crashes.
+    this->_Myfirst = (T*)begin; 
+    this->_Myend = (T*)begin + size;
+    this->_Mylast = (T*)this->_Myend;
+  }
+  
+  ~vector_stale()
+  {
+    // We don't deallocated. Only the user using the API can.
+    this->_Myfirst = NULL;
+    this->_Myend = NULL;
+    this->_Mylast = NULL;
+  }
+};
+
+
+XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
+                                          const SparseEntry * entries,
+                                          xgboost::bst_ulong nb_entries,
+                                          int option_mask,
+                                          unsigned ntree_limit,
+                                          xgboost::bst_ulong len,
+                                          xgboost::bst_ulong len_buffer,
+                                          const float *out_result,
+                                          const float *pred_buffer,
+                                          const unsigned *pred_counter) {
+  API_BEGIN();
+  DCHECK(entries != NULL) << "entries is null";
+  DCHECK(out_result != NULL) << "out_result is null";
+  vector_stale<float> preds(out_result, len);
+  vector_stale<float> tpred_buffer(pred_buffer, len_buffer);
+  vector_stale<unsigned> tpred_counter(pred_counter, len_buffer);
+  RowBatch::Inst inst((RowBatch::Entry*)entries, nb_entries);
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->learner()->PredictNoInsideCache( 
+    inst,
+    (option_mask & 1) != 0, 
+    preds, tpred_buffer, tpred_counter, ntree_limit);
+  // We check no pointer were deallocated.
+  DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
+  DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
+  DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
+  API_END();
+}
+
+XGB_DLL int XGBoosterPredictOutputSize(BoosterHandle handle,
+                                          const SparseEntry * entries,
+                                          xgboost::bst_ulong nb_entries,
+                                        int option_mask,
+                                        unsigned ntree_limit,
+                                        xgboost::bst_ulong *len,
+                                        xgboost::bst_ulong *len_buffer) {
+  API_BEGIN();
+  std::vector<float> preds;
+  DCHECK(entries != NULL) << "entries is null";
+  RowBatch::Inst inst((RowBatch::Entry*)entries, nb_entries);
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->learner()->PredictOutputSize(
+    inst,
+    (option_mask & 1) != 0,
+    *len,
+    *len_buffer,
+    ntree_limit);
+  API_END();
+}
+
+//////////////////
+// END OF ADDITION
+//////////////////
 
 XGB_DLL int XGBoosterLoadModel(BoosterHandle handle, const char* fname) {
   API_BEGIN();

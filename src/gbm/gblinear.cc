@@ -218,6 +218,31 @@ class GBLinear : public GradientBooster {
       this->Pred(inst, dmlc::BeginPtr(*out_preds), gid, base_margin_);
     }
   }
+  
+  /// ADDITION FOR ONE OFF PREDICTION
+
+  void PredictNoInsideCache(const SparseBatch::Inst &inst,
+                            std::vector<float>& out_preds,
+                            std::vector<float>& pred_buffer, 
+                            std::vector<unsigned>& pred_counter,
+                            unsigned ntree_limit,
+                            unsigned root_index) override {
+    size_t t = out_preds.size();
+    Predict(inst, &out_preds, ntree_limit, root_index);
+    CHECK(t == out_preds.size()) << "Output size was changed. Check implementation.";
+  }
+  
+  void PredictOutputSize(const SparseBatch::Inst& inst,
+                         bst_ulong &out_size,
+                         bst_ulong& out_size_buffer,
+                         unsigned ntree_limit = 0,
+                         unsigned root_index = 0) {
+    out_size = model.param.num_output_group;
+    out_size_buffer = 0;
+  }
+  
+  // END
+  
   void PredictLeaf(DMatrix *p_fmat,
                    std::vector<float> *out_preds,
                    unsigned ntree_limit) override {
