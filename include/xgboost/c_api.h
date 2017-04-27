@@ -425,6 +425,7 @@ typedef struct  {
  * \param out_result allocated buffer for prediction (it must be allocated by the user which gets its size by calling function XGBoosterPredictOutputSize)
  * \param pred_buffer allocated internal buffer (it must be allocated by the user which gets its size by calling function XGBoosterPredictOutputSize)
  * \param pred_counter (it must be allocated by the user which gets its size by calling function XGBoosterPredictOutputSize)
+ * \param regtreefvec (it must be allocated by the user, size = number of features)
  * \return 0 when success, -1 when failure happens
  */
  XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
@@ -436,7 +437,23 @@ typedef struct  {
                                           bst_ulong XGBoosterBufferOutputSizeout_len,
                                           const float *out_result,
                                           const float *pred_buffer,
-                                          const unsigned *pred_counter);
+                                          const unsigned *pred_counter,
+										  const /*RegTree::FVec*/ void* regtreefvec);
+
+/*!
+* Allocate internal buffers for XGBoosterPredictNoInsideCache
+* \param nb_features number of features
+* \param regtreefvec output
+* \return 0 when success, -1 when failure happens
+*/
+XGB_DLL int XGBoosterPredictNoInsideCacheAllocate(int nb_features, /*RegTree::FVec*/ void** regtreefvec);
+
+/*!
+* Free internal buffers for XGBoosterPredictNoInsideCache
+* \param regtreefvec allocated buffer
+* \return 0 when success, -1 when failure happens
+*/
+XGB_DLL int XGBoosterPredictNoInsideCacheFree(/*RegTree::FVec*/ void* regtreefvec);
 
 /*!
  * \brief return the size of the cache XGBoost needs to compute the one off predictions.

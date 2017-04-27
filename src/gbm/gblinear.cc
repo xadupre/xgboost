@@ -226,7 +226,8 @@ class GBLinear : public GradientBooster {
                             std::vector<float>& pred_buffer, 
                             std::vector<unsigned>& pred_counter,
                             unsigned ntree_limit,
-                            unsigned root_index) override {
+                            unsigned root_index,
+							/*RegTree::FVec*/ void *void_thread_cache) override {
     size_t t = out_preds.size();
     Predict(inst, &out_preds, ntree_limit, root_index);
     CHECK(t == out_preds.size()) << "Output size was changed. Check implementation.";

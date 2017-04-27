@@ -178,7 +178,8 @@ class Learner : public rabit::Serializable {
                                    std::vector<float>& out_preds,
                                    std::vector<float>& pred_buffer,
                                    std::vector<unsigned>& pred_counter,
-                                   unsigned ntree_limit = 0) const;
+                                   unsigned ntree_limit = 0,
+								   /*RegTree::FVec*/ void *void_thread_cache = 0) const;
   inline void PredictOutputSize(const SparseBatch::Inst& inst,
                                 bool output_margin,
                                 bst_ulong &out_size,
@@ -218,9 +219,10 @@ inline void Learner::PredictNoInsideCache(const SparseBatch::Inst& inst,
                                           std::vector<float>& out_preds,
                                           std::vector<float> &pred_buffer,
                                           std::vector<unsigned> &pred_counter,
-                                          unsigned ntree_limit) const {
+                                          unsigned ntree_limit,
+										  /*RegTree::FVec*/ void *void_thread_cache) const {
   size_t t = out_preds.size();
-  gbm_->PredictNoInsideCache(inst, out_preds, pred_buffer, pred_counter, ntree_limit);
+  gbm_->PredictNoInsideCache(inst, out_preds, pred_buffer, pred_counter, ntree_limit, 0, void_thread_cache);
 
   CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
   if (!output_margin) {

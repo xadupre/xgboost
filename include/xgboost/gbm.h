@@ -103,7 +103,8 @@ class GradientBooster {
                                     std::vector<float> &pred_buffer,
                                     std::vector<unsigned> &pred_counter,
                                     unsigned ntree_limit = 0,
-                                    unsigned root_index = 0) = 0;
+                                    unsigned root_index = 0,
+									/*RegTree::FVec*/ void *void_thread_cache = 0) = 0;
   virtual void PredictOutputSize(const SparseBatch::Inst& inst,
                                  bst_ulong &out_size,
                                  bst_ulong &out_size_buffer,

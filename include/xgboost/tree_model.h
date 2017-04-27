@@ -447,7 +447,13 @@ class RegTree: public TreeModel<bst_float, RTreeNodeStat> {
      */
     inline bool is_missing(size_t i) const;
 
-   private:
+	/*!
+	* \brief return data.size()
+	* \return number of features
+	*/
+	inline size_t size() const;
+
+  private:
     /*!
      * \brief a union value of value and flag
      *  when flag == -1, this indicate the value is missing
@@ -497,6 +503,10 @@ inline void RegTree::FVec::Init(size_t size) {
   Entry e; e.flag = -1;
   data.resize(size);
   std::fill(data.begin(), data.end(), e);
+}
+
+inline size_t RegTree::FVec::size() const {
+	return data.size();
 }
 
 inline void RegTree::FVec::Fill(const RowBatch::Inst& inst) {

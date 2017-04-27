@@ -321,10 +321,11 @@ class GBTree : public GradientBooster {
                             std::vector<float>& pred_buffer,
                             std::vector<unsigned> &pred_counter,
                             unsigned ntree_limit,
-                            unsigned root_index) override {
-    RegTree::FVec thread_cache[1];
-    thread_cache[0] = RegTree::FVec();
-    thread_cache[0].Init(mparam.num_feature);
+                            unsigned root_index,
+							/*RegTree::FVec*/ void *void_thread_cache) override {
+    RegTree::FVec * thread_cache = (RegTree::FVec*)void_thread_cache;
+	DCHECK(thread_cache != NULL) << "thread_cache must not be null.";
+	DCHECK(thread_cache->size() == mparam.num_feature) << "Number of features are different:" << thread_cache->size() << " != " << mparam.num_feature << "(expected)";
     DCHECK(out_preds.size() == mparam.num_output_group * (mparam.size_leaf_vector + 1)) << "Size are different.";
     ntree_limit *= mparam.num_output_group;
     if (ntree_limit == 0 || ntree_limit > trees.size()) {
@@ -334,7 +335,7 @@ class GBTree : public GradientBooster {
     for (int gid = 0; gid < mparam.num_output_group; ++gid) {
       out_preds[gid] =
           PredValue(inst, gid, root_index,
-          &thread_cache[0], 0, ntree_limit) + base_margin_;
+          thread_cache, 0, ntree_limit) + base_margin_;
     }
   }
 
@@ -685,11 +686,12 @@ class Dart : public GBTree {
                             std::vector<float> &pred_buffer,
                             std::vector<unsigned> &pred_counter,
                             unsigned ntree_limit,
-                            unsigned root_index) override {
+                            unsigned root_index,
+							/*RegTree::FVec*/ void *void_thread_cache) override {
+    RegTree::FVec * thread_cache = (RegTree::FVec*)void_thread_cache;
+	DCHECK(thread_cache != NULL) << "thread_cache must not be null.";
+	DCHECK(thread_cache->size() == mparam.num_feature) << "Number of featuress are different.";
     std::vector<size_t> idx_drop;
-    RegTree::FVec thread_cache[1];
-    thread_cache[0] = RegTree::FVec();
-    thread_cache[0].Init(mparam.num_feature);
     //DropTrees(ntree_limit, idx_drop);
     DCHECK(out_preds.size() == mparam.num_output_group * (mparam.size_leaf_vector + 1)) << "Size are different.";
     ntree_limit *= mparam.num_output_group;
@@ -704,7 +706,7 @@ class Dart : public GBTree {
     for (int gid = 0; gid < mparam.num_output_group; ++gid) {
       out_preds[gid]
         = PredValue(inst, gid, root_index,
-            &thread_cache[0], 0, ntree_limit) + base_margin_;
+            thread_cache, 0, ntree_limit) + base_margin_;
     }
   }
 

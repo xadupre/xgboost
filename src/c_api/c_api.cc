@@ -4,6 +4,7 @@
 #include <xgboost/learner.h>
 #include <xgboost/c_api.h>
 #include <xgboost/logging.h>
+#include <xgboost/tree_model.h>
 #include <dmlc/thread_local.h>
 #include <rabit/rabit.h>
 #include <cstdio>
@@ -726,24 +727,45 @@ XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
                                           xgboost::bst_ulong len_buffer,
                                           const float *out_result,
                                           const float *pred_buffer,
-                                          const unsigned *pred_counter) {
+                                          const unsigned *pred_counter,
+										  const /*RegTree::FVec*/ void *regtreefvec) {
   API_BEGIN();
   DCHECK(entries != NULL) << "entries is null";
   DCHECK(out_result != NULL) << "out_result is null";
   vector_stale<float> preds(out_result, len);
   vector_stale<float> tpred_buffer(pred_buffer, len_buffer);
   vector_stale<unsigned> tpred_counter(pred_counter, len_buffer);
+  RegTree::FVec *regtreevecobj = (RegTree::FVec*) regtreefvec;
   RowBatch::Inst inst((RowBatch::Entry*)entries, nb_entries);
   Booster *bst = static_cast<Booster*>(handle);
   bst->learner()->PredictNoInsideCache( 
     inst,
     (option_mask & 1) != 0, 
-    preds, tpred_buffer, tpred_counter, ntree_limit);
+    preds, tpred_buffer, tpred_counter, ntree_limit, regtreevecobj);
   // We check no pointer were deallocated.
   DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
   API_END();
+}
+
+XGB_DLL int XGBoosterPredictNoInsideCacheAllocate(int nb_features, /*RegTree::FVec*/ void** regtreefvec)
+{
+	API_BEGIN();
+	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
+	RegTree::FVec * buffer = new RegTree::FVec();
+	buffer->Init(nb_features);
+	*regtreefvec = (void*)buffer;
+	API_END();
+}
+
+XGB_DLL int XGBoosterPredictNoInsideCacheFree(/*RegTree::FVec*/ void* regtreefvec)
+{
+	API_BEGIN();
+	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
+	RegTree::FVec * buffer = (RegTree::FVec*)regtreefvec;
+	delete buffer;
+	API_END();
 }
 
 XGB_DLL int XGBoosterPredictOutputSize(BoosterHandle handle,
