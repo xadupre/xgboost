@@ -6,6 +6,7 @@
  */
 #include <xgboost/logging.h>
 #include <xgboost/learner.h>
+#include <dmlc/timer.h>
 #include <dmlc/io.h>
 #include <algorithm>
 #include <vector>
@@ -25,8 +26,10 @@ bool Learner::AllowLazyCheckPoint() const {
 }
 
 std::vector<std::string>
-Learner::Dump2Text(const FeatureMap& fmap, int option) const {
-  return gbm_->Dump2Text(fmap, option);
+Learner::DumpModel(const FeatureMap& fmap,
+                   bool with_stats,
+                   std::string format) const {
+  return gbm_->DumpModel(fmap, with_stats, format);
 }
 
 
@@ -34,7 +37,7 @@ Learner::Dump2Text(const FeatureMap& fmap, int option) const {
 struct LearnerModelParam
     : public dmlc::Parameter<LearnerModelParam> {
   /* \brief global bias */
-  float base_score;
+  bst_float base_score;
   /* \brief number of features  */
   unsigned num_feature;
   /* \brief number of classes, if it is multi-class classification  */
@@ -81,6 +84,8 @@ struct LearnerTrainParam
   // number of threads to use if OpenMP is enabled
   // if equals 0, use system default
   int nthread;
+  // flag to print out detailed breakdown of runtime
+  int debug_verbose;
   // declare parameters
   DMLC_DECLARE_PARAMETER(LearnerTrainParam) {
     DMLC_DECLARE_FIELD(seed).set_default(0)
@@ -92,11 +97,12 @@ struct LearnerTrainParam
         .add_enum("auto", 0)
         .add_enum("col", 1)
         .add_enum("row", 2)
-        .describe("Data split mode for distributed trainig. ");
+        .describe("Data split mode for distributed training.");
     DMLC_DECLARE_FIELD(tree_method).set_default(0)
         .add_enum("auto", 0)
         .add_enum("approx", 1)
         .add_enum("exact", 2)
+        .add_enum("hist", 3)
         .describe("Choice of tree construction method.");
     DMLC_DECLARE_FIELD(test_flag).set_default("")
         .describe("Internal test flag");
@@ -106,6 +112,10 @@ struct LearnerTrainParam
         .describe("maximum row per batch.");
     DMLC_DECLARE_FIELD(nthread).set_default(0)
         .describe("Number of threads to use.");
+    DMLC_DECLARE_FIELD(debug_verbose)
+        .set_lower_bound(0)
+        .set_default(0)
+        .describe("flag to print out detailed breakdown of runtime");
   }
 };
 
@@ -165,7 +175,12 @@ class LearnerImpl : public Learner {
       cfg_["max_delta_step"] = "0.7";
     }
 
-    if (cfg_.count("updater") == 0) {
+    if (tparam.tree_method == 3) {
+      /* histogram-based algorithm */
+      LOG(CONSOLE) << "Tree method is selected to be \'hist\', which uses a single updater "
+                   << "grow_fast_histmaker.";
+      cfg_["updater"] = "grow_fast_histmaker";
+    } else if (cfg_.count("updater") == 0) {
       if (tparam.dsplit == 1) {
         cfg_["updater"] = "distcol";
       } else if (tparam.dsplit == 2) {
@@ -216,7 +231,7 @@ class LearnerImpl : public Learner {
       CHECK_NE(header, "bs64")
           << "Base64 format is no longer supported in brick.";
       if (header == "binf") {
-        CHECK_EQ(fp.Read(&header[0], 4), 4);
+        CHECK_EQ(fp.Read(&header[0], 4), 4U);
       }
     }
     // use the peekable reader.
@@ -253,6 +268,11 @@ class LearnerImpl : public Learner {
       attributes_ = std::map<std::string, std::string>(
           attr.begin(), attr.end());
     }
+    if (name_obj_ == "count:poisson") {
+        std::string max_delta_step;
+        fi->Read(&max_delta_step);
+        cfg_["max_delta_step"] = max_delta_step;
+    }
     cfg_["num_class"] = common::ToString(mparam.num_class);
     cfg_["num_feature"] = common::ToString(mparam.num_feature);
     obj_->Configure(cfg_.begin(), cfg_.end());
@@ -268,6 +288,11 @@ class LearnerImpl : public Learner {
       std::vector<std::pair<std::string, std::string> > attr(
           attributes_.begin(), attributes_.end());
       fo->Write(attr);
+    }
+    if (name_obj_ == "count:poisson") {
+        std::map<std::string, std::string>::const_iterator it = cfg_.find("max_delta_step");
+        if (it != cfg_.end())
+            fo->Write(it->second);
     }
   }
 
@@ -296,6 +321,7 @@ class LearnerImpl : public Learner {
   std::string EvalOneIter(int iter,
                           const std::vector<DMatrix*>& data_sets,
                           const std::vector<std::string>& data_names) override {
+    double tstart = dmlc::GetTime();
     std::ostringstream os;
     os << '[' << iter << ']'
        << std::setiosflags(std::ios::fixed);
@@ -309,6 +335,10 @@ class LearnerImpl : public Learner {
         os << '\t' << data_names[i] << '-' << ev->Name() << ':'
            << ev->Eval(preds_, data_sets[i]->info(), tparam.dsplit == 2);
       }
+    }
+
+    if (tparam.debug_verbose > 0) {
+      LOG(INFO) << "EvalOneIter(): " << dmlc::GetTime() - tstart << " sec";
     }
     return os.str();
   }
@@ -341,7 +371,7 @@ class LearnerImpl : public Learner {
     return out;
   }
 
-  std::pair<std::string, float> Evaluate(DMatrix* data, std::string metric) {
+  std::pair<std::string, bst_float> Evaluate(DMatrix* data, std::string metric) {
     if (metric == "auto") metric = obj_->DefaultEvalMetric();
     std::unique_ptr<Metric> ev(Metric::Create(metric.c_str()));
     this->PredictRaw(data, &preds_);
@@ -351,7 +381,7 @@ class LearnerImpl : public Learner {
 
   void Predict(DMatrix* data,
                bool output_margin,
-               std::vector<float> *out_preds,
+               std::vector<bst_float> *out_preds,
                unsigned ntree_limit,
                bool pred_leaf) const override {
     if (pred_leaf) {
@@ -367,8 +397,8 @@ class LearnerImpl : public Learner {
  protected:
   // check if p_train is ready to used by training.
   // if not, initialize the column access.
-  inline void LazyInitDMatrix(DMatrix *p_train) {
-    if (!p_train->HaveColAccess()) {
+  inline void LazyInitDMatrix(DMatrix* p_train) {
+    if (tparam.tree_method != 3 && !p_train->HaveColAccess()) {
       int ncol = static_cast<int>(p_train->info().num_col);
       std::vector<bool> enabled(ncol, true);
       // set max row per batch to limited value
@@ -448,7 +478,7 @@ class LearnerImpl : public Learner {
    *   predictor, when it equals 0, this means we are using all the trees
    */
   inline void PredictRaw(DMatrix* data,
-                         std::vector<float>* out_preds,
+                         std::vector<bst_float>* out_preds,
                          unsigned ntree_limit = 0) const {
     CHECK(gbm_.get() != nullptr)
         << "Predict must happen after Load or InitModel";
@@ -466,10 +496,10 @@ class LearnerImpl : public Learner {
   std::map<std::string, std::string> attributes_;
   // name of gbm
   std::string name_gbm_;
-  // name of objective functon
+  // name of objective function
   std::string name_obj_;
   // temporal storages for prediction
-  std::vector<float> preds_;
+  std::vector<bst_float> preds_;
   // gradient pairs
   std::vector<bst_gpair> gpair_;
 

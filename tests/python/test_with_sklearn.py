@@ -9,12 +9,20 @@ rng = np.random.RandomState(1994)
 def test_binary_classification():
     tm._skip_if_no_sklearn()
     from sklearn.datasets import load_digits
-    from sklearn.cross_validation import KFold
+    try:
+        from sklearn.model_selection import KFold
+    except:
+        from sklearn.cross_validation import KFold
 
     digits = load_digits(2)
     y = digits['target']
     X = digits['data']
-    kf = KFold(y.shape[0], n_folds=2, shuffle=True, random_state=rng)
+    try:
+        kf = KFold(y.shape[0], n_folds=2, shuffle=True, random_state=rng)
+    except TypeError:  # sklearn.model_selection.KFold uses n_split
+        kf = KFold(
+            n_splits=2, shuffle=True, random_state=rng
+        ).split(np.arange(y.shape[0]))
     for train_index, test_index in kf:
         xgb_model = xgb.XGBClassifier().fit(X[train_index], y[train_index])
         preds = xgb_model.predict(X[test_index])
@@ -27,7 +35,10 @@ def test_binary_classification():
 def test_multiclass_classification():
     tm._skip_if_no_sklearn()
     from sklearn.datasets import load_iris
-    from sklearn.cross_validation import KFold
+    try:
+        from sklearn.cross_validation import KFold
+    except:
+        from sklearn.model_selection import KFold
 
     def check_pred(preds, labels):
         err = sum(1 for i in range(len(preds))
@@ -251,7 +262,7 @@ def test_sklearn_plotting():
 def test_sklearn_nfolds_cv():
     tm._skip_if_no_sklearn()
     from sklearn.datasets import load_digits
-    from sklearn.cross_validation import StratifiedKFold
+    from sklearn.model_selection import StratifiedKFold
 
     digits = load_digits(3)
     X = digits['data']
@@ -269,10 +280,10 @@ def test_sklearn_nfolds_cv():
 
     seed = 2016
     nfolds = 5
-    skf = StratifiedKFold(y, n_folds=nfolds, shuffle=True, random_state=seed)
+    skf = StratifiedKFold(n_splits=nfolds, shuffle=True, random_state=seed)
 
     cv1 = xgb.cv(params, dm, num_boost_round=10, nfold=nfolds, seed=seed)
-    cv2 = xgb.cv(params, dm, num_boost_round=10, folds=skf, seed=seed)
+    cv2 = xgb.cv(params, dm, num_boost_round=10, nfold=nfolds, folds=skf, seed=seed)
     cv3 = xgb.cv(params, dm, num_boost_round=10, nfold=nfolds, stratified=True, seed=seed)
     assert cv1.shape[0] == cv2.shape[0] and cv2.shape[0] == cv3.shape[0]
     assert cv2.iloc[-1, 0] == cv3.iloc[-1, 0]
