@@ -692,7 +692,7 @@ class Dart : public GBTree {
 	DCHECK(thread_cache != NULL) << "thread_cache must not be null.";
 	DCHECK(thread_cache->size() == mparam.num_feature) << "Number of featuress are different.";
     std::vector<size_t> idx_drop;
-    //DropTrees(ntree_limit, idx_drop);
+    DropTrees(ntree_limit, idx_drop);
     DCHECK(out_preds.size() == mparam.num_output_group * (mparam.size_leaf_vector + 1)) << "Size are different.";
     ntree_limit *= mparam.num_output_group;
     if (ntree_limit == 0 || ntree_limit > trees.size()) {
@@ -705,8 +705,8 @@ class Dart : public GBTree {
     }
     for (int gid = 0; gid < mparam.num_output_group; ++gid) {
       out_preds[gid]
-        = PredValue(inst, gid, root_index,
-            thread_cache, 0, ntree_limit) + base_margin_;
+        = PredValueNoInsideCache(inst, gid, root_index,
+            thread_cache, 0, ntree_limit, idx_drop) + base_margin_;
     }
   }
 
@@ -749,6 +749,28 @@ class Dart : public GBTree {
     for (size_t i = tree_begin; i < tree_end; ++i) {
       if (tree_info[i] == bst_group) {
         bool drop = (std::binary_search(_idx_drop.begin(), _idx_drop.end(), i));
+        if (!drop) {
+          int tid = trees[i]->GetLeafIndex(*p_feats, root_index);
+          psum += weight_drop[i] * (*trees[i])[tid].leaf_value();
+        }
+      }
+    }
+    p_feats->Drop(inst);
+    return psum;
+  }
+
+  inline bst_float PredValueNoInsideCache(const RowBatch::Inst &inst,
+                             int bst_group,
+                             unsigned root_index,
+                             RegTree::FVec *p_feats,
+                             unsigned tree_begin,
+                             unsigned tree_end,
+							 const std::vector<size_t> &idx_drop) {
+    bst_float psum = 0.0f;
+    p_feats->Fill(inst);
+    for (size_t i = tree_begin; i < tree_end; ++i) {
+      if (tree_info[i] == bst_group) {
+        bool drop = (std::binary_search(idx_drop.begin(), idx_drop.end(), i));
         if (!drop) {
           int tid = trees[i]->GetLeafIndex(*p_feats, root_index);
           psum += weight_drop[i] * (*trees[i])[tid].leaf_value();
