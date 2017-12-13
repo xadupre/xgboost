@@ -12,7 +12,7 @@ xgb.train(params = list(), data, nrounds, watchlist = list(), obj = NULL,
 
 xgboost(data = NULL, label = NULL, missing = NA, weight = NULL,
   params = list(), nrounds, verbose = 1, print_every_n = 1L,
-  early_stopping_rounds = NULL, maximize = NULL, save_period = 0,
+  early_stopping_rounds = NULL, maximize = NULL, save_period = NULL,
   save_name = "xgboost.model", xgb_model = NULL, callbacks = list(), ...)
 }
 \arguments{
@@ -258,6 +258,10 @@ bst <- xgboost(data = agaricus.train$data, label = agaricus.train$label,
                objective = "binary:logistic")
 pred <- predict(bst, agaricus.test$data)
 
+}
+\references{
+Tianqi Chen and Carlos Guestrin, "XGBoost: A Scalable Tree Boosting System",
+22nd SIGKDD Conference on Knowledge Discovery and Data Mining, 2016, \url{https://arxiv.org/abs/1603.02754}
 }
 \seealso{
 \code{\link{callbacks}},
