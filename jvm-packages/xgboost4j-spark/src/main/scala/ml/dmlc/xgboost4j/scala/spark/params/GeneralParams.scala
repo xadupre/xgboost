@@ -17,10 +17,8 @@
 package ml.dmlc.xgboost4j.scala.spark.params
 
 import ml.dmlc.xgboost4j.scala.spark.TrackerConf
-import ml.dmlc.xgboost4j.scala.{EvalTrait, ObjectiveTrait}
-import org.apache.spark.ml.param._
 
-import scala.concurrent.duration.{Duration, NANOSECONDS}
+import org.apache.spark.ml.param._
 
 trait GeneralParams extends Params {
 
@@ -58,19 +56,26 @@ trait GeneralParams extends Params {
   /**
    * customized objective function provided by user. default: null
    */
-  val customObj = new Param[ObjectiveTrait](this, "custom_obj", "customized objective function " +
+  val customObj = new CustomObjParam(this, "custom_obj", "customized objective function " +
     "provided by user")
 
   /**
    * customized evaluation function provided by user. default: null
    */
-  val customEval = new Param[EvalTrait](this, "custom_eval", "customized evaluation function " +
+  val customEval = new CustomEvalParam(this, "custom_eval", "customized evaluation function " +
     "provided by user")
 
   /**
    * the value treated as missing. default: Float.NaN
    */
   val missing = new FloatParam(this, "missing", "the value treated as missing")
+
+  /**
+    * the interval to check whether total numCores is no smaller than nWorkers. default: 30 minutes
+    */
+  val timeoutRequestWorkers = new LongParam(this, "timeout_request_workers", "the maximum time to" +
+    " request new Workers if numCores are insufficient. The timeout will be disabled if this" +
+    " value is set smaller than or equal to 0.")
 
   /**
     * Rabit tracker configurations. The parameter must be provided as an instance of the
@@ -99,11 +104,14 @@ trait GeneralParams extends Params {
     *        Note that zero timeout value means to wait indefinitely (equivalent to Duration.Inf).
     *        Ignored if the tracker implementation is "python".
     */
-  val trackerConf = new Param[TrackerConf](this, "tracker_conf", "Rabit tracker configurations")
+  val trackerConf = new TrackerConfParam(this, "tracker_conf", "Rabit tracker configurations")
+
+  /** Random seed for the C++ part of XGBoost and train/test splitting. */
+  val seed = new LongParam(this, "seed", "random seed")
 
   setDefault(round -> 1, nWorkers -> 1, numThreadPerTask -> 1,
     useExternalMemory -> false, silent -> 0,
     customObj -> null, customEval -> null, missing -> Float.NaN,
-    trackerConf -> TrackerConf()
+    trackerConf -> TrackerConf(), seed -> 0, timeoutRequestWorkers -> 30 * 60 * 1000L
   )
 }
