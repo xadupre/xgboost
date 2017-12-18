@@ -534,6 +534,14 @@ class RegTree: public TreeModel<bst_float, RTreeNodeStat> {
   std::string DumpModel(const FeatureMap& fmap,
                         bool with_stats,
                         std::string format) const;
+
+  /*!
+  * \brief return one numeric features about xgboost
+  * \param nameStr name of the request
+  * \return 0 when success, -1 when failure happens
+  */
+  double GetNumInfo(const std::string &nameStr) const;
+
   /*!
    * \brief calculate the mean value for each node, required for feature contributions
    */

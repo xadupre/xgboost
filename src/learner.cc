@@ -32,6 +32,11 @@ std::vector<std::string> Learner::DumpModel(const FeatureMap& fmap,
   return gbm_->DumpModel(fmap, with_stats, format);
 }
 
+double Learner::GetNumInfo(const std::string& nameStr) const {
+	return gbm_->GetNumInfo(nameStr);
+}
+
+
 /*! \brief training parameter for regression */
 struct LearnerModelParam : public dmlc::Parameter<LearnerModelParam> {
   /* \brief global bias */

@@ -333,6 +333,11 @@ class GBLinear : public GradientBooster {
     return v;
   }
 
+  double GetNumInfo(const std::string &nameStr) const
+  {
+	  throw new std::exception("No associated metric.");
+  }
+
  protected:
   inline void Pred(const RowBatch::Inst &inst, bst_float *preds, int gid, bst_float base) {
     bst_float psum = model.bias()[gid] + base;

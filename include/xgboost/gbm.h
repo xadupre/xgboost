@@ -152,6 +152,14 @@ class GradientBooster {
   virtual std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                              bool with_stats,
                                              std::string format) const = 0;
+
+  /*!
+  * \brief return one numeric features about xgboost
+  * \param nameStr name of the request
+  * \return 0 when success, -1 when failure happens
+  */
+  virtual double GetNumInfo(const std::string &nameStr) const = 0;
+
   /*!
    * \brief create a gradient booster from given name
    * \param name name of gradient booster

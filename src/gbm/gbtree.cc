@@ -249,6 +249,11 @@ class GBTree : public GradientBooster {
   /// ADDITION
   //////////// 
 
+  double GetNumInfo(const std::string &nameStr) const
+  {
+	  return model_.GetNumInfo(nameStr);
+  }
+
   void PredictNoInsideCache(const SparseBatch::Inst &inst,
                             std::vector<float>& out_preds,
                             std::vector<float>& pred_buffer,

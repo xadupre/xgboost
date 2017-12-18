@@ -695,7 +695,6 @@ XGB_DLL int XGBoosterUpdateOneIter(BoosterHandle handle,
   Booster* bst = static_cast<Booster*>(handle);
   std::shared_ptr<DMatrix> *dtr =
       static_cast<std::shared_ptr<DMatrix>*>(dtrain);
-
   bst->LazyInit();
   bst->learner()->UpdateOneIter(iter, dtr->get());
   API_END();
@@ -938,6 +937,25 @@ XGB_DLL int XGBoosterPredictOutputSize(BoosterHandle handle,
   API_END();
 }
 
+XGB_DLL int XGBoosterNumInfo(BoosterHandle handle, ArrayHandle outNum, const char* nameStr)
+{
+	API_BEGIN();
+	Booster *bst = static_cast<Booster*>(handle);
+	double *dout = (double*)outNum;
+	*dout = bst->learner()->GetNumInfo(nameStr);
+	API_END();
+}
+
+XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayHandle outNum, const char* nameStr)
+{
+	API_BEGIN();
+	Booster *bst = static_cast<Booster*>(handle);
+	double *dout = (double*)outNum;
+	*dout = bst->learner()->GetNumInfo(nameStr);
+	API_END();
+}
+
+
 //////////////////
 // END OF ADDITION
 //////////////////
@@ -1002,6 +1020,7 @@ inline void XGBoostDumpModelImpl(
   *out_models = dmlc::BeginPtr(charp_vecs);
   *len = static_cast<xgboost::bst_ulong>(charp_vecs.size());
 }
+
 XGB_DLL int XGBoosterDumpModel(BoosterHandle handle,
                        const char* fmap,
                        int with_stats,
@@ -1009,6 +1028,7 @@ XGB_DLL int XGBoosterDumpModel(BoosterHandle handle,
                        const char*** out_models) {
   return XGBoosterDumpModelEx(handle, fmap, with_stats, "text", len, out_models);
 }
+
 XGB_DLL int XGBoosterDumpModelEx(BoosterHandle handle,
                        const char* fmap,
                        int with_stats,

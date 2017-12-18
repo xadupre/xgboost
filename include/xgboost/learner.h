@@ -153,6 +153,14 @@ class Learner : public rabit::Serializable {
   std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                      bool with_stats,
                                      std::string format) const;
+
+  /*!
+  * \brief return one numeric features about xgboost
+  * \param nameStr name of the request
+  * \return 0 when success, -1 when failure happens
+  */
+  double GetNumInfo(const std::string& nameStr) const;
+
   /*!
    * \brief online prediction function, predict score for one instance at a time
    *  NOTE: use the batch prediction interface if possible, batch prediction is usually

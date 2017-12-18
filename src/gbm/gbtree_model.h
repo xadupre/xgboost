@@ -116,6 +116,14 @@ struct GBTreeModel {
     }
     return dump;
   }
+
+  double GetNumInfo(const std::string &nameStr) const
+  {
+	  if (nameStr == "NumTrees")
+		  return (double)trees.size();
+	  throw new std::exception("Unknown requested metric.");
+  }
+
   void CommitModel(std::vector<std::unique_ptr<RegTree> >&& new_trees,
                    int bst_group) {
     for (size_t i = 0; i < new_trees.size(); ++i) {

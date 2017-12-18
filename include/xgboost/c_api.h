@@ -37,6 +37,8 @@ typedef void *BoosterHandle;
 typedef void *DataIterHandle;
 /*! \brief handle to a internal data holder. */
 typedef void *DataHolderHandle;
+/*! \brief handle to a internal data holder. */
+typedef void *ArrayHandle;
 
 /*! \brief Mini batch used in XGBoost Data Iteration */
 typedef struct {
@@ -333,6 +335,7 @@ XGB_DLL int XGDMatrixNumCol(DMatrixHandle handle,
 XGB_DLL int XGBoosterCreate(const DMatrixHandle dmats[],
                             bst_ulong len,
                             BoosterHandle *out);
+
 /*!
  * \brief free obj in handle
  * \param handle handle to be freed
@@ -514,6 +517,16 @@ XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
                                  const float * values,
                                  const int * indices,
                                  float missing);
+
+
+/*!
+* \brief return one numeric features about xgboost
+* \param out handle to the result booster
+* \param nameStr name of the request
+* \param outNum numeric feature
+* \return 0 when success, -1 when failure happens
+*/
+XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayHandle outNum, const char* nameStr);
 
 //////////////////
 // END OF ADDITION

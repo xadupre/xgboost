@@ -149,4 +149,10 @@ std::string RegTree::DumpModel(const FeatureMap& fmap,
   }
   return fo.str();
 }
+
+double RegTree::GetNumInfo(const std::string &nameStr) const
+{
+	throw new std::exception("Unknown requested metric.");
+}
+
 }  // namespace xgboost
