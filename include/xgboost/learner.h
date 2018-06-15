@@ -201,14 +201,6 @@ class Learner : public rabit::Serializable {
                                 bst_ulong &out_size_buffer,
                                 unsigned ntree_limit = 0) const;
 
-  void Learner::PredictNoInsideCacheLOG(const SparsePage::Inst& inst,
-  										bool output_margin,
-										const char *legend = "PredictNoInsideCache") const;
-
-  void Learner::PredictNoInsideCacheLOG2(std::vector<float> &out_preds,
-                                         bool output_margin,
-										 const char *legend = "PredictNoInsideCache") const;
-
   // END
 
  protected:

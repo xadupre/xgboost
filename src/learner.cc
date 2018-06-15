@@ -38,7 +38,6 @@ double Learner::GetNumInfo(const std::string& nameStr) const {
 	return gbm_->GetNumInfo(nameStr);
 }
 
-
 /*! \brief training parameter for regression */
 struct LearnerModelParam : public dmlc::Parameter<LearnerModelParam> {
   /* \brief global bias */
