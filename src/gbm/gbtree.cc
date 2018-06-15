@@ -259,7 +259,7 @@ class GBTree : public GradientBooster {
   /// ADDITION
   //////////// 
 
-  double GetNumInfo(const std::string &nameStr) const
+  double GetNumInfo(const std::string &nameStr) const override
   {
 	  return model_.GetNumInfo(nameStr);
   }

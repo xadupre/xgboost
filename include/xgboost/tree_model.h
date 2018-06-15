@@ -560,7 +560,7 @@ class RegTree: public TreeModel<bst_float, RTreeNodeStat> {
   * \param nameStr name of the request
   * \return 0 when success, -1 when failure happens
   */
-  double GetNumInfo(const std::string &nameStr) const;
+  virtual double GetNumInfo(const std::string &nameStr) const;
 
   /*!
    * \brief calculate the mean value for each node, required for feature contributions

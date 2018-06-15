@@ -832,7 +832,13 @@ template <typename T>
 class vector_stale : public std::vector<T>
 {
   public:
-  vector_stale(const T* begin, size_type size) throw() : std::vector<T>() 
+  vector_stale(const T* begin, 
+#if(_MSC_VER)
+	  size_type size
+#else
+	  size_t size
+#endif
+  ) throw() : std::vector<T>() 
   { 
     // We initialize the vector to a buffer,
     // There should not be any allocation, resizing or deallocation.
@@ -841,6 +847,10 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = (T*)begin; 
     this->_Myend() = (T*)begin + size;
     this->_Mylast() = (T*)this->_Myend();
+#elif __GNC__
+	  this->__first = (T*)begin;
+	  this->__end = (T*)begin + size;
+	  this->__last = (T*)this->__end;
 #else
     this->_Myfirst = (T*)begin; 
     this->_Myend = (T*)begin + size;
@@ -855,8 +865,12 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = NULL;
     this->_Myend() = NULL;
     this->_Mylast() = NULL;
+#elif __GNC__
+	  this->__first = NULL;
+	  this->__end = NULL;
+	  this->__last = NULL;
 #else
-    this->_Myfirst = NULL;
+	this->_Myfirst = NULL;
     this->_Myend = NULL;
     this->_Mylast = NULL;
 #endif
