@@ -16,13 +16,16 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
+import java.io.File
+import java.nio.file.Files
+
 import scala.collection.mutable
 import scala.util.Random
-
 import ml.dmlc.xgboost4j.java.{IRabitTracker, Rabit, XGBoostError, RabitTracker => PyRabitTracker}
 import ml.dmlc.xgboost4j.scala.rabit.RabitTracker
 import ml.dmlc.xgboost4j.scala.{XGBoost => SXGBoost, _}
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
+import org.apache.commons.io.FileUtils
 import org.apache.commons.logging.LogFactory
 import org.apache.hadoop.fs.{FSDataInputStream, Path}
 import org.apache.spark.rdd.RDD
@@ -99,40 +102,36 @@ object XGBoost extends Serializable {
       data: RDD[XGBLabeledPoint],
       params: Map[String, Any],
       rabitEnv: java.util.Map[String, String],
-      numWorkers: Int,
       round: Int,
       obj: ObjectiveTrait,
       eval: EvalTrait,
       useExternalMemory: Boolean,
-      missing: Float): RDD[(Booster, Map[String, Array[Float]])] = {
-    val partitionedData = if (data.getNumPartitions != numWorkers) {
-      logger.info(s"repartitioning training set to $numWorkers partitions")
-      data.repartition(numWorkers)
-    } else {
-      data
-    }
-    val partitionedBaseMargin = partitionedData.map(_.baseMargin)
-    val appName = partitionedData.context.appName
+      missing: Float,
+      prevBooster: Booster
+    ): RDD[(Booster, Map[String, Array[Float]])] = {
+
+    val partitionedBaseMargin = data.map(_.baseMargin)
     // to workaround the empty partitions in training dataset,
     // this might not be the best efficient implementation, see
     // (https://github.com/dmlc/xgboost/issues/1277)
-    partitionedData.zipPartitions(partitionedBaseMargin) { (labeledPoints, baseMargins) =>
+    data.zipPartitions(partitionedBaseMargin) { (labeledPoints, baseMargins) =>
       if (labeledPoints.isEmpty) {
         throw new XGBoostError(
           s"detected an empty partition in the training data, partition ID:" +
             s" ${TaskContext.getPartitionId()}")
       }
-      val cacheFileName = if (useExternalMemory) {
-        s"$appName-${TaskContext.get().stageId()}-" +
-          s"dtrain_cache-${TaskContext.getPartitionId()}"
+      val taskId = TaskContext.getPartitionId().toString
+      val cacheDirName = if (useExternalMemory) {
+        val dir = Files.createTempDirectory(s"${TaskContext.get().stageId()}-cache-$taskId")
+        Some(dir.toAbsolutePath.toString)
       } else {
-        null
+        None
       }
-      rabitEnv.put("DMLC_TASK_ID", TaskContext.getPartitionId().toString)
+      rabitEnv.put("DMLC_TASK_ID", taskId)
       Rabit.init(rabitEnv)
       val watches = Watches(params,
         removeMissingValues(labeledPoints, missing),
-        fromBaseMarginsToArray(baseMargins), cacheFileName)
+        fromBaseMarginsToArray(baseMargins), cacheDirName)
 
       try {
         val numEarlyStoppingRounds = params.get("numEarlyStoppingRounds")
@@ -140,7 +139,7 @@ object XGBoost extends Serializable {
         val metrics = Array.tabulate(watches.size)(_ => Array.ofDim[Float](round))
         val booster = SXGBoost.train(watches.train, params, round,
           watches.toMap, metrics, obj, eval,
-          earlyStoppingRound = numEarlyStoppingRounds)
+          earlyStoppingRound = numEarlyStoppingRounds, prevBooster)
         Iterator(booster -> watches.toMap.keys.zip(metrics).toMap)
       } finally {
         Rabit.shutdown()
@@ -325,34 +324,59 @@ object XGBoost extends Serializable {
       case _ => throw new IllegalArgumentException("parameter \"timeout_request_workers\" must be" +
         " an instance of Long.")
     }
+    val (checkpointPath, checkpointInterval) = CheckpointManager.extractParams(params)
+    val partitionedData = repartitionForTraining(trainingData, nWorkers)
 
-    val tracker = startTracker(nWorkers, trackerConf)
-    try {
-      val sc = trainingData.sparkContext
-      val parallelismTracker = new SparkParallelismTracker(sc, timeoutRequestWorkers, nWorkers)
-      val overriddenParams = overrideParamsAccordingToTaskCPUs(params, trainingData.sparkContext)
-      val boostersAndMetrics = buildDistributedBoosters(trainingData, overriddenParams,
-        tracker.getWorkerEnvs, nWorkers, round, obj, eval, useExternalMemory, missing)
-      val sparkJobThread = new Thread() {
-        override def run() {
-          // force the job
-          boostersAndMetrics.foreachPartition(() => _)
-        }
+    val sc = trainingData.sparkContext
+    val checkpointManager = new CheckpointManager(sc, checkpointPath)
+    checkpointManager.cleanUpHigherVersions(round)
+
+    var prevBooster = checkpointManager.loadCheckpointAsBooster
+    // Train for every ${savingRound} rounds and save the partially completed booster
+    checkpointManager.getCheckpointRounds(checkpointInterval, round).map {
+      checkpointRound: Int =>
+        val tracker = startTracker(nWorkers, trackerConf)
+        try {
+          val parallelismTracker = new SparkParallelismTracker(sc, timeoutRequestWorkers, nWorkers)
+          val overriddenParams = overrideParamsAccordingToTaskCPUs(params, sc)
+          val boostersAndMetrics = buildDistributedBoosters(partitionedData, overriddenParams,
+            tracker.getWorkerEnvs, checkpointRound, obj, eval, useExternalMemory, missing,
+            prevBooster)
+          val sparkJobThread = new Thread() {
+            override def run() {
+              // force the job
+              boostersAndMetrics.foreachPartition(() => _)
+            }
+          }
+          sparkJobThread.setUncaughtExceptionHandler(tracker)
+          sparkJobThread.start()
+          val isClsTask = isClassificationTask(params)
+          val trackerReturnVal = parallelismTracker.execute(tracker.waitFor(0L))
+          logger.info(s"Rabit returns with exit code $trackerReturnVal")
+          val model = postTrackerReturnProcessing(trackerReturnVal, boostersAndMetrics,
+            sparkJobThread, isClsTask)
+          if (isClsTask){
+            model.asInstanceOf[XGBoostClassificationModel].numOfClasses =
+              params.getOrElse("num_class", "2").toString.toInt
+          }
+          if (checkpointRound < round) {
+            prevBooster = model.booster
+            checkpointManager.updateCheckpoint(model)
+          }
+          model
+      } finally {
+        tracker.stop()
       }
-      sparkJobThread.setUncaughtExceptionHandler(tracker)
-      sparkJobThread.start()
-      val isClsTask = isClassificationTask(params)
-      val trackerReturnVal = parallelismTracker.execute(tracker.waitFor(0L))
-      logger.info(s"Rabit returns with exit code $trackerReturnVal")
-      val model = postTrackerReturnProcessing(trackerReturnVal, boostersAndMetrics,
-        sparkJobThread, isClsTask)
-      if (isClsTask){
-        model.asInstanceOf[XGBoostClassificationModel].numOfClasses =
-          params.getOrElse("num_class", "2").toString.toInt
-      }
-      model
-    } finally {
-      tracker.stop()
+    }.last
+  }
+
+
+  private[spark] def repartitionForTraining(trainingData: RDD[XGBLabeledPoint], nWorkers: Int) = {
+    if (trainingData.getNumPartitions != nWorkers) {
+      logger.info(s"repartitioning training set to $nWorkers partitions")
+      trainingData.repartition(nWorkers)
+    } else {
+      trainingData
     }
   }
 
@@ -400,6 +424,7 @@ object XGBoost extends Serializable {
     xgBoostModel.setPredictionCol(predCol)
   }
 
+
   /**
    * Load XGBoost model from path in HDFS-compatible file system
    *
@@ -442,7 +467,10 @@ object XGBoost extends Serializable {
   }
 }
 
-private class Watches private(val train: DMatrix, val test: DMatrix) {
+private class Watches private(
+  val train: DMatrix,
+  val test: DMatrix,
+  private val cacheDirName: Option[String]) {
 
   def toMap: Map[String, DMatrix] = Map("train" -> train, "test" -> test)
     .filter { case (_, matrix) => matrix.rowNum > 0 }
@@ -451,6 +479,9 @@ private class Watches private(val train: DMatrix, val test: DMatrix) {
 
   def delete(): Unit = {
     toMap.values.foreach(_.delete())
+    cacheDirName.foreach { name =>
+      FileUtils.deleteDirectory(new File(name))
+    }
   }
 
   override def toString: String = toMap.toString
@@ -462,7 +493,7 @@ private object Watches {
       params: Map[String, Any],
       labeledPoints: Iterator[XGBLabeledPoint],
       baseMarginsOpt: Option[Array[Float]],
-      cacheFileName: String): Watches = {
+      cacheDirName: Option[String]): Watches = {
     val trainTestRatio = params.get("trainTestRatio").map(_.toString.toDouble).getOrElse(1.0)
     val seed = params.get("seed").map(_.toString.toLong).getOrElse(System.nanoTime())
     val r = new Random(seed)
@@ -475,8 +506,8 @@ private object Watches {
 
       accepted
     }
-    val trainMatrix = new DMatrix(trainPoints, cacheFileName)
-    val testMatrix = new DMatrix(testPoints.iterator, cacheFileName)
+    val trainMatrix = new DMatrix(trainPoints, cacheDirName.map(_ + "/train").orNull)
+    val testMatrix = new DMatrix(testPoints.iterator, cacheDirName.map(_ + "/test").orNull)
     r.setSeed(seed)
     for (baseMargins <- baseMarginsOpt) {
       val (trainMargin, testMargin) = baseMargins.partition(_ => r.nextDouble() <= trainTestRatio)
@@ -489,6 +520,6 @@ private object Watches {
       trainMatrix.setGroup(params("groupData").asInstanceOf[Seq[Seq[Int]]](
         TaskContext.getPartitionId()).toArray)
     }
-    new Watches(train = trainMatrix, test = testMatrix)
+    new Watches(trainMatrix, testMatrix, cacheDirName)
   }
 }

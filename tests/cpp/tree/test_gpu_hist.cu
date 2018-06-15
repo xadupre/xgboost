@@ -7,6 +7,7 @@
 #include "../helpers.h"
 #include "gtest/gtest.h"
 
+#include "../../../src/data/sparse_page_source.h"
 #include "../../../src/gbm/gbtree_model.h"
 #include "../../../src/tree/updater_gpu_hist.cu"
 
@@ -22,13 +23,20 @@ TEST(gpu_hist_experimental, TestSparseShard) {
   hmat.Init(dmat.get(), max_bins);
   gmat.cut = &hmat;
   gmat.Init(dmat.get());
-  ncclComm_t comm;
-  DeviceShard shard(0, 0, gmat, 0, rows, hmat.row_ptr.back(),
-                    TrainParam());
+  TrainParam p;
+  p.max_depth = 6;
+
+  dmlc::DataIter<SparsePage>* iter = dmat->RowIterator();
+  iter->BeforeFirst();
+  CHECK(iter->Next());
+  const SparsePage& batch = iter->Value();
+  DeviceShard shard(0, 0, 0, rows, hmat.row_ptr.back(), p);
+  shard.Init(hmat, batch);
+  CHECK(!iter->Next());
 
   ASSERT_LT(shard.row_stride, columns);
 
-  auto host_gidx_buffer = shard.gidx_buffer.as_vector();
+  auto host_gidx_buffer = shard.gidx_buffer.AsVector();
 
   common::CompressedIterator<uint32_t> gidx(host_gidx_buffer.data(),
                                             hmat.row_ptr.back() + 1);
@@ -56,13 +64,21 @@ TEST(gpu_hist_experimental, TestDenseShard) {
   hmat.Init(dmat.get(), max_bins);
   gmat.cut = &hmat;
   gmat.Init(dmat.get());
-  ncclComm_t comm;
-  DeviceShard shard(0, 0, gmat, 0, rows, hmat.row_ptr.back(),
-                    TrainParam());
+  TrainParam p;
+  p.max_depth = 6;
+
+  dmlc::DataIter<SparsePage>* iter = dmat->RowIterator();
+  iter->BeforeFirst();
+  CHECK(iter->Next());
+  const SparsePage& batch = iter->Value();
+
+  DeviceShard shard(0, 0, 0, rows, hmat.row_ptr.back(), p);
+  shard.Init(hmat, batch);
+  CHECK(!iter->Next());
 
   ASSERT_EQ(shard.row_stride, columns);
 
-  auto host_gidx_buffer = shard.gidx_buffer.as_vector();
+  auto host_gidx_buffer = shard.gidx_buffer.AsVector();
 
   common::CompressedIterator<uint32_t> gidx(host_gidx_buffer.data(),
                                             hmat.row_ptr.back() + 1);
