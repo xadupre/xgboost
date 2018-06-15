@@ -167,7 +167,7 @@ std::string RegTree::DumpModel(const FeatureMap& fmap,
 
 double RegTree::GetNumInfo(const std::string &nameStr) const
 {
-	throw std::exception("Unknown requested metric.");
+	throw std::runtime_error("Unknown requested metric.");
 }
 
 }  // namespace xgboost

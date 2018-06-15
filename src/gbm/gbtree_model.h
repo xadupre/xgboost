@@ -123,7 +123,7 @@ struct GBTreeModel {
   {
 	  if (nameStr == "NumTrees")
 		  return (double)trees.size();
-	  throw std::exception("Unknown requested metric.");
+	  throw std::runtime_error("Unknown requested metric.");
   }
 
   void CommitModel(std::vector<std::unique_ptr<RegTree> >&& new_trees,
