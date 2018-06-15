@@ -144,7 +144,7 @@ class GBLinear : public GradientBooster {
 	  unsigned root_index = 0,
 	  /*RegTree::FVec*/ void *void_thread_cache = 0) override
   {
-	  throw new std::logic_error("Not implemented error.");
+	  throw std::logic_error("Not implemented error.");
   }
 
   void PredictOutputSize(const SparsePage::Inst& inst,
@@ -153,12 +153,12 @@ class GBLinear : public GradientBooster {
 	  unsigned ntree_limit = 0,
 	  unsigned root_index = 0) override
   {
-	  throw new std::logic_error("Not implemented error.");
+	  throw std::logic_error("Not implemented error.");
   }
 
   double GetNumInfo(const std::string &nameStr) const override
   {
-	  throw new std::logic_error("Not implemented error.");
+	  throw std::logic_error("Not implemented error.");
   }
 
   //////////////////////////////

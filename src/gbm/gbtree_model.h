@@ -8,6 +8,8 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <stdexcept>
+
 
 namespace xgboost {
 namespace gbm {
@@ -121,7 +123,7 @@ struct GBTreeModel {
   {
 	  if (nameStr == "NumTrees")
 		  return (double)trees.size();
-	  throw new std::exception("Unknown requested metric.");
+	  throw std::exception("Unknown requested metric.");
   }
 
   void CommitModel(std::vector<std::unique_ptr<RegTree> >&& new_trees,

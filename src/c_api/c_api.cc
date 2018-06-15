@@ -847,7 +847,7 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = (T*)begin; 
     this->_Myend() = (T*)begin + size;
     this->_Mylast() = (T*)this->_Myend();
-#elif __GNC__
+#elif __GNC__ || __MINGW32__ || __MINGW64__
 	  this->__first = (T*)begin;
 	  this->__end = (T*)begin + size;
 	  this->__last = (T*)this->__end;
@@ -865,7 +865,7 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = NULL;
     this->_Myend() = NULL;
     this->_Mylast() = NULL;
-#elif __GNC__
+#elif __GNC__ || __MINGW32__ || __MINGW64__
 	  this->__first = NULL;
 	  this->__end = NULL;
 	  this->__last = NULL;
