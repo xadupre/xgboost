@@ -374,16 +374,16 @@ class Dart : public GBTree {
 
   void Load(dmlc::Stream* fi) override {
     GBTree::Load(fi);
-    _weight_drop.resize(model_.param.num_trees);
+    weight_drop_.resize(model_.param.num_trees);
     if (model_.param.num_trees != 0) {
-      fi->Read(&_weight_drop);
+      fi->Read(&weight_drop_);
     }
   }
 
   void Save(dmlc::Stream* fo) const override {
     GBTree::Save(fo);
-    if (_weight_drop.size() != 0) {
-      fo->Write(_weight_drop);
+    if (weight_drop_.size() != 0) {
+      fo->Write(weight_drop_);
     }
   }
 
@@ -391,7 +391,7 @@ class Dart : public GBTree {
   void PredictBatch(DMatrix* p_fmat,
                     HostDeviceVector<bst_float>* out_preds,
                     unsigned ntree_limit) override {
-    DropTrees(ntree_limit, _idx_drop, _weight_drop);
+    DropTrees(ntree_limit, _idx_drop);
     PredLoopInternal<Dart>(p_fmat, &out_preds->HostVector(), 0, ntree_limit, true);
   }
 
@@ -399,7 +399,7 @@ class Dart : public GBTree {
                std::vector<bst_float>* out_preds,
                unsigned ntree_limit,
                unsigned root_index) override {
-    DropTrees(1, _idx_drop, _weight_drop);
+    DropTrees(1, _idx_drop);
     if (thread_temp_.size() == 0) {
       thread_temp_.resize(1, RegTree::FVec());
       thread_temp_[0].Init(model_.param.num_feature);
@@ -413,7 +413,7 @@ class Dart : public GBTree {
     for (int gid = 0; gid < model_.param.num_output_group; ++gid) {
       (*out_preds)[gid]
           = PredValue(inst, gid, root_index,
-                      &thread_temp_[0], 0, ntree_limit) + model_.base_margin;
+                      &thread_temp_[0], 0, ntree_limit, _idx_drop) + model_.base_margin;
     }
   }
 
@@ -497,7 +497,7 @@ class Dart : public GBTree {
             const size_t offset = ridx[k] * num_group + gid;
             preds[offset] +=
                 self->PredValue(inst[k], gid, info.GetRoot(ridx[k]),
-                                &feats, tree_begin, tree_end);
+                                &feats, tree_begin, tree_end, _idx_drop);
           }
         }
       }
@@ -509,7 +509,7 @@ class Dart : public GBTree {
           const size_t offset = ridx * num_group + gid;
           preds[offset] +=
               self->PredValue(inst, gid, info.GetRoot(ridx),
-                              &feats, tree_begin, tree_end);
+                              &feats, tree_begin, tree_end, _idx_drop);
         }
       }
     }
@@ -523,10 +523,10 @@ class Dart : public GBTree {
       num_new_trees += new_trees[gid].size();
       model_.CommitModel(std::move(new_trees[gid]), gid);
     }
-    size_t num_drop = NormalizeTrees(num_new_trees, _idx_drop, _weight_drop);
+    size_t num_drop = NormalizeTrees(num_new_trees);
     if (dparam_.silent != 1) {
       LOG(INFO) << "drop " << num_drop << " trees, "
-                << "weight = " << _weight_drop.back();
+                << "weight = " << weight_drop_.back();
     }
   }
   
@@ -546,10 +546,9 @@ class Dart : public GBTree {
     DCHECK(thread_cache != NULL) << "thread_cache must not be null.";
     DCHECK(thread_cache->Size() == model_.param.num_feature) << "Number of featuress are different.";
     std::vector<size_t> idx_drop;
-	std::vector<float> weight_drop;
     DCHECK(out_preds.size() == model_.param.num_output_group) << "Size are different.";
     
-	//DropTrees(1, idx_drop, weight_drop);
+	DropTrees(ntree_limit, idx_drop);
 	if (thread_temp_.size() == 0) {
 		thread_temp_.resize(1, RegTree::FVec());
 		thread_temp_[0].Init(model_.param.num_feature);
@@ -563,7 +562,7 @@ class Dart : public GBTree {
 	for (int gid = 0; gid < model_.param.num_output_group; ++gid) {
 		out_preds[gid]
 			= PredValue(inst, gid, root_index,
-				&thread_temp_[0], 0, ntree_limit) + model_.base_margin;
+				&thread_temp_[0], 0, ntree_limit, idx_drop) + model_.base_margin;
 	}
   }
 
@@ -586,15 +585,16 @@ class Dart : public GBTree {
                              unsigned root_index,
                              RegTree::FVec *p_feats,
                              unsigned tree_begin,
-                             unsigned tree_end) {
+                             unsigned tree_end,
+							 std::vector<size_t> idx_drop) {
     bst_float psum = 0.0f;
     p_feats->Fill(inst);
     for (size_t i = tree_begin; i < tree_end; ++i) {
       if (model_.tree_info[i] == bst_group) {
-        bool drop = (std::binary_search(_idx_drop.begin(), _idx_drop.end(), i));
+        bool drop = (std::binary_search(idx_drop.begin(), idx_drop.end(), i));
         if (!drop) {
           int tid = model_.trees[i]->GetLeafIndex(*p_feats, root_index);
-          psum += _weight_drop[i] * (*model_.trees[i])[tid].LeafValue();
+          psum += weight_drop_[i] * (*model_.trees[i])[tid].LeafValue();
         }
       }
     }
@@ -604,8 +604,7 @@ class Dart : public GBTree {
 
   // select which trees to drop
   inline void DropTrees(unsigned ntree_limit_drop,
-  						std::vector<size_t> &idx_drop,
-						std::vector<float> &weight_drop) {
+  						std::vector<size_t> &idx_drop) {
     idx_drop.clear();
     if (ntree_limit_drop > 0) return;
 
@@ -617,32 +616,33 @@ class Dart : public GBTree {
     if (!skip) {
       if (dparam_.sample_type == 1) {
         bst_float sum_weight = 0.0;
-        for (auto elem : weight_drop) {
+        for (auto elem : weight_drop_) {
           sum_weight += elem;
         }
-        for (size_t i = 0; i < weight_drop.size(); ++i) {
-          if (runif(rnd) < dparam_.rate_drop * weight_drop.size() * weight_drop[i] / sum_weight) {
+        for (size_t i = 0; i < weight_drop_.size(); ++i) {
+          if (runif(rnd) < dparam_.rate_drop * weight_drop_.size() * weight_drop_[i] / sum_weight) {
             idx_drop.push_back(i);
           }
         }
-        if (dparam_.one_drop && idx_drop.empty() && !weight_drop.empty()) {
+        if (dparam_.one_drop && idx_drop.empty() && !weight_drop_.empty()) {
           // the expression below is an ugly but MSVC2013-friendly equivalent of
           // size_t i = std::discrete_distribution<size_t>(weight_drop.begin(),
           //                                               weight_drop.end())(rnd);
           size_t i = std::discrete_distribution<size_t>(
-            weight_drop.size(), 0., static_cast<double>(weight_drop.size()),
-            [weight_drop](double x) -> double { return weight_drop[static_cast<size_t>(x)]; })
-			(rnd);
+            weight_drop_.size(), 0., static_cast<double>(weight_drop_.size()),
+            [this](double x) -> double {
+              return weight_drop_[static_cast<size_t>(x)];
+            })(rnd);
           idx_drop.push_back(i);
         }
       } else {
-        for (size_t i = 0; i < weight_drop.size(); ++i) {
+        for (size_t i = 0; i < weight_drop_.size(); ++i) {
           if (runif(rnd) < dparam_.rate_drop) {
             idx_drop.push_back(i);
           }
         }
-        if (dparam_.one_drop && idx_drop.empty() && !weight_drop.empty()) {
-          size_t i = std::uniform_int_distribution<size_t>(0, weight_drop.size() - 1)(rnd);
+        if (dparam_.one_drop && idx_drop.empty() && !weight_drop_.empty()) {
+          size_t i = std::uniform_int_distribution<size_t>(0, weight_drop_.size() - 1)(rnd);
           idx_drop.push_back(i);
         }
       }
@@ -650,38 +650,36 @@ class Dart : public GBTree {
   }
 
   // set normalization factors
-  inline size_t NormalizeTrees(size_t size_new_trees,
-                               std::vector<size_t> &idx_drop,
-							   std::vector<float> &weight_drop) {
+  inline size_t NormalizeTrees(size_t size_new_trees) {
     float lr = 1.0 * dparam_.learning_rate / size_new_trees;
-    size_t num_drop = idx_drop.size();
+    size_t num_drop = _idx_drop.size();
     if (num_drop == 0) {
       for (size_t i = 0; i < size_new_trees; ++i) {
-        weight_drop.push_back(1.0);
+        weight_drop_.push_back(1.0);
       }
     } else {
       if (dparam_.normalize_type == 1) {
         // normalize_type 1
         float factor = 1.0 / (1.0 + lr);
-        for (auto i : idx_drop) {
-          weight_drop[i] *= factor;
+        for (auto i : _idx_drop) {
+          weight_drop_[i] *= factor;
         }
         for (size_t i = 0; i < size_new_trees; ++i) {
-          weight_drop.push_back(factor);
+          weight_drop_.push_back(factor);
         }
       } else {
         // normalize_type 0
         float factor = 1.0 * num_drop / (num_drop + lr);
-        for (auto i : idx_drop) {
-          weight_drop[i] *= factor;
+        for (auto i : _idx_drop) {
+          weight_drop_[i] *= factor;
         }
         for (size_t i = 0; i < size_new_trees; ++i) {
-          weight_drop.push_back(1.0 / (num_drop + lr));
+          weight_drop_.push_back(1.0 / (num_drop + lr));
         }
       }
     }
     // reset
-    idx_drop.clear();
+    _idx_drop.clear();
     return num_drop;
   }
 
@@ -700,7 +698,7 @@ class Dart : public GBTree {
   // training parameter
   DartTrainParam dparam_;
   /*! \brief prediction buffer */
-  std::vector<bst_float> _weight_drop;
+  std::vector<bst_float> weight_drop_;
   // indexes of dropped trees
   std::vector<size_t> _idx_drop;
   // temporal storage for per thread

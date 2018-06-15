@@ -244,6 +244,9 @@ inline void Learner::PredictNoInsideCache(const SparsePage::Inst& inst,
     t = out_preds.size();
 	HostDeviceVector<float> host_pred(out_preds);
     obj_->PredTransform(&host_pred);
+	// The copy should be avoided.
+	auto values = host_pred.HostVector();
+	std::copy(values.begin(), values.end(), out_preds.begin());
     CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
   }
 }

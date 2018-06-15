@@ -821,6 +821,16 @@ XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
 }
 
 
+#if __GNUC__ || __MINGW32__ || __MINGW64__
+
+template <typename T>
+class vector_stale : public std::vector<T>
+{
+	// Must be improved on linux.
+	// STL implementation is different.
+};
+
+#else
 /**
 * This class creates a stale vector pointing to the pointer given
 * to the constructor. It is means to be initialized with a pointer allocated
@@ -847,10 +857,6 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = (T*)begin; 
     this->_Myend() = (T*)begin + size;
     this->_Mylast() = (T*)this->_Myend();
-#elif __GNUC__ || __MINGW32__ || __MINGW64__
-	  this->__first = (T*)begin;
-	  this->__end = (T*)begin + size;
-	  this->__last = (T*)this->__end;
 #else
     this->_Myfirst = (T*)begin; 
     this->_Myend = (T*)begin + size;
@@ -865,10 +871,6 @@ class vector_stale : public std::vector<T>
     this->_Myfirst() = NULL;
     this->_Myend() = NULL;
     this->_Mylast() = NULL;
-#elif __GNUC__ || __MINGW32__ || __MINGW64__
-	  this->__first = NULL;
-	  this->__end = NULL;
-	  this->__last = NULL;
 #else
 	this->_Myfirst = NULL;
     this->_Myend = NULL;
@@ -876,6 +878,7 @@ class vector_stale : public std::vector<T>
 #endif
   }
 };
+#endif
 
 
 XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
@@ -903,9 +906,15 @@ XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
     (option_mask & 1) != 0, 
     preds, tpred_buffer, tpred_counter, ntree_limit, regtreevecobj);
   // We check no pointer were deallocated.
+#if __GNUC__ || __MINGW32__ || __MINGW64__
+  memcpy(out_result, preds.c_ptr(), preds.size() * sizeof(float));
+  memcpy(pred_buffer, tpred_buffer.c_ptr(), tpred_buffer.size() * sizeof(float));
+  memcpy(pred_counter, tpred_counter.c_ptr(), tpred_counter.size() * sizeof(unsigned));
+#else
   DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
+#endif
   API_END();
 }
 
