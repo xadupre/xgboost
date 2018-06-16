@@ -107,7 +107,7 @@ test_script:
       )
     - if /i "%target%" == "msvc" (
             if /i "%configuration%" == "Debug" (
-              dotnet build tests\CSharpUnitTest\csunit.sln
+              dotnet build tests\CSharpUnitTest\csunit.sln &&
               dotnet test tests\CSharpUnitTest\csunit.sln
             )
       )
