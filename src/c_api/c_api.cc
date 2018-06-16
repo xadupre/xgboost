@@ -842,14 +842,9 @@ template <typename T>
 class vector_stale : public std::vector<T>
 {
   public:
-  vector_stale(const T* begin, 
-#if(_MSC_VER)
-	  size_type size
-#else
-	  size_t size
-#endif
+//#undef _MSC_VER 
 #if(_MSC_VER >= 1900)
-  ) throw() : std::vector<T>()
+  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
   {
 	  // We initialize the vector to a buffer,
     // There should not be any allocation, resizing or deallocation.
@@ -858,35 +853,45 @@ class vector_stale : public std::vector<T>
     this->_Myend() = (T*)begin + size;
     this->_Mylast() = (T*)this->_Myend();
   }
+  ~vector_stale()
+  {
+	this->_Myfirst() = NULL;
+	this->_Myend() = NULL;
+	this->_Mylast() = NULL;
+  }
 #elif(_MSC_VER)
-  ) throw() : std::vector<T>()
+  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
   {
 	  this->_Myfirst = (T*)begin;
     this->_Myend = (T*)begin + size;
     this->_Mylast = (T*)this->_Myend;
   }
-#else
-	  ) throw() : std::vector<T>(begin, size)
-  {
-  }
-#endif
-  
   ~vector_stale()
   {
-    // We don't deallocated. Only the user using the API can.
-#if(_MSC_VER >= 1900)
-    this->_Myfirst() = NULL;
-    this->_Myend() = NULL;
-    this->_Mylast() = NULL;
-#else
 	this->_Myfirst = NULL;
-    this->_Myend = NULL;
-    this->_Mylast = NULL;
-#endif
+	this->_Myend = NULL;
+	this->_Mylast = NULL;
+}
+#else
+  vector_stale(const T* begin, size_t size) throw() : std::vector<T>(begin, begin == NULL ? NULL : begin + (size_t)size)
+  {
   }
+  ~vector_stale()
+  {
+  }
+#endif
 };
 #endif
 
+template<class InputIt, class OutputIt>
+OutputIt copy_custom(InputIt first, InputIt last, OutputIt d_first)
+{
+	if(d_first != NULL) {
+		while (first != last)
+			*d_first++ = *first++;
+	}
+	return d_first;
+}
 
 XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
                                           const SparseEntry * entries,
@@ -913,11 +918,14 @@ XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
     (option_mask & 1) != 0, 
     preds, tpred_buffer, tpred_counter, ntree_limit, regtreevecobj);
   // We check no pointer were deallocated.
-#if __GNUC__ || __MINGW32__ || __MINGW64__
-#else
+#if _MSC_VER
   DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
   DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
+#else
+  copy_custom(preds.begin(), preds.end(), (float*)out_result);
+  copy_custom(tpred_buffer.begin(), tpred_buffer.end(), (float*)pred_buffer);
+  copy_custom(tpred_counter.begin(), tpred_counter.end(), (unsigned*)pred_counter);
 #endif
   API_END();
 }
