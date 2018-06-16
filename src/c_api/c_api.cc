@@ -873,7 +873,8 @@ class vector_stale : public std::vector<T>
 	this->_Mylast = NULL;
 }
 #else
-  vector_stale(const T* begin, size_t size) throw() : std::vector<T>(begin, begin == NULL ? NULL : begin + (size_t)size)
+  vector_stale(const T* begin, xgboost::bst_ulong size) throw(): 
+	  std::vector<T>(begin, begin == NULL ? NULL : begin + (size_t)size)
   {
   }
   ~vector_stale()
