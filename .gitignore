@@ -93,3 +93,7 @@ metastore_db
 plugin/updater_gpu/test/cpp/data
 xgboost.ilk
 xgboost.pdb
+.vs
+
+tests/CSharpUnitTest/packages/MSTest.TestAdapter.1.2.1/MSTest.TestAdapter.1.2.1.nupkg
+tests/CSharpUnitTest/packages/MSTest.TestFramework.1.2.1/MSTest.TestFramework.1.2.1.nupkg

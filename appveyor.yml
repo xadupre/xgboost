@@ -9,11 +9,15 @@ environment:
         - target: msvc
           ver: 2015
           generator: "Visual Studio 14 2015 Win64"
-          configuration: Debug
-        - target: msvc
-          ver: 2015
-          generator: "Visual Studio 14 2015 Win64"
           configuration: Release
+        - target: msvc
+          ver: 2017
+          generator: "Visual Studio 15 2017 Win64"
+          configuration: Release
+        - target: msvc
+          ver: 2017
+          generator: "Visual Studio 15 2017 Win64"
+          configuration: Debug
         - target: mingw
           generator: "Unix Makefiles"
         - target: jvm
@@ -104,6 +108,12 @@ test_script:
     - if /i "%target%" == "rmsvc" (
         cd build_rmsvc%ver%\R-package &&
         R.exe -q -e "library(testthat); setwd('tests'); source('testthat.R')"
+      )
+    - if /i "%target%" == "msvc" (
+            if /i "%configuration%" == "Debug" (
+              dotnet build tests\CSharpUnitTest\csunit.sln
+              dotnet test tests\CSharpUnitTest\csunit.sln
+            )
       )
 
 on_failure:
