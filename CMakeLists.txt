@@ -106,7 +106,11 @@ endif()
 
 # dmlc-core
 add_subdirectory(dmlc-core)
+if(MSVC)
 set(LINK_LIBRARIES dmlccore rabit)
+else()
+set(LINK_LIBRARIES dmlc rabit)
+endif()
 
 
 if(USE_CUDA)
