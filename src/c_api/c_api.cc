@@ -908,9 +908,20 @@ XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
   API_BEGIN();
   DCHECK(entries != NULL) << "entries is null";
   DCHECK(out_result != NULL) << "out_result is null";
+#if(_MSC_VER)
   vector_stale<float> preds(out_result, len);
   vector_stale<float> tpred_buffer(pred_buffer, len_buffer);
   vector_stale<unsigned> tpred_counter(pred_counter, len_buffer);
+#else
+  std::vector<float> preds;
+  std::vector<float> tpred_buffer;
+  std::vector<unsigned> tpred_counter;
+  preds.assign(out_result, out_result + len);
+  if (pred_buffer != NULL)
+    tpred_buffer.assign(pred_buffer, pred_buffer + len_buffer);
+  if (pred_counter != NULL)
+	tpred_counter.assign(pred_counter, pred_counter + len_buffer);
+#endif
   RegTree::FVec *regtreevecobj = (RegTree::FVec*) regtreefvec;
   SparsePage::Inst inst((Entry*)entries, nb_entries);
   Booster *bst = static_cast<Booster*>(handle);
