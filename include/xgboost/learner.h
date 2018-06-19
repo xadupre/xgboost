@@ -37,7 +37,7 @@ namespace xgboost {
 class Learner : public rabit::Serializable {
  public:
   /*! \brief virtual destructor */
-  virtual ~Learner() {}
+  ~Learner() override = default;
   /*!
    * \brief set configuration from pair iterators.
    * \param begin The beginning iterator.
@@ -62,12 +62,12 @@ class Learner : public rabit::Serializable {
    * \brief load model from stream
    * \param fi input stream.
    */
-  virtual void Load(dmlc::Stream* fi) = 0;
+  void Load(dmlc::Stream* fi) override = 0;
   /*!
    * \brief save model to stream.
    * \param fo output stream
    */
-  virtual void Save(dmlc::Stream* fo) const = 0;
+  void Save(dmlc::Stream* fo) const override = 0;
   /*!
    * \brief update the model for one iteration
    *  With the specified objective function.
@@ -84,7 +84,7 @@ class Learner : public rabit::Serializable {
    */
   virtual void BoostOneIter(int iter,
                             DMatrix* train,
-                            std::vector<bst_gpair>* in_gpair) = 0;
+                            HostDeviceVector<GradientPair>* in_gpair) = 0;
   /*!
    * \brief evaluate the model for specific iteration using the configured metrics.
    * \param iter iteration number
@@ -105,14 +105,17 @@ class Learner : public rabit::Serializable {
    * \param pred_leaf whether to only predict the leaf index of each tree in a boosted tree predictor
    * \param pred_contribs whether to only predict the feature contributions
    * \param approx_contribs whether to approximate the feature contributions for speed
+   * \param pred_interactions whether to compute the feature pair contributions
    */
   virtual void Predict(DMatrix* data,
                        bool output_margin,
-                       std::vector<bst_float> *out_preds,
+                       HostDeviceVector<bst_float> *out_preds,
                        unsigned ntree_limit = 0,
                        bool pred_leaf = false,
                        bool pred_contribs = false,
-                       bool approx_contribs = false) const = 0;
+                       bool approx_contribs = false,
+                       bool pred_interactions = false) const = 0;
+
   /*!
    * \brief Set additional attribute to the Booster.
    *  The property will be saved along the booster.
@@ -153,14 +156,6 @@ class Learner : public rabit::Serializable {
   std::vector<std::string> DumpModel(const FeatureMap& fmap,
                                      bool with_stats,
                                      std::string format) const;
-
-  /*!
-  * \brief return one numeric features about xgboost
-  * \param nameStr name of the request
-  * \return 0 when success, -1 when failure happens
-  */
-  double GetNumInfo(const std::string& nameStr) const;
-
   /*!
    * \brief online prediction function, predict score for one instance at a time
    *  NOTE: use the batch prediction interface if possible, batch prediction is usually
@@ -172,9 +167,9 @@ class Learner : public rabit::Serializable {
    * \param out_preds output vector to hold the predictions
    * \param ntree_limit limit the number of trees used in prediction
    */
-  inline void Predict(const SparseBatch::Inst &inst,
+  inline void Predict(const SparsePage::Inst &inst,
                       bool output_margin,
-                      std::vector<bst_float> *out_preds,
+                      HostDeviceVector<bst_float> *out_preds,
                       unsigned ntree_limit = 0) const;
   /*!
    * \brief Create a new instance of learner.
@@ -185,21 +180,26 @@ class Learner : public rabit::Serializable {
 
   /// ADDITION FOR ONE OFF PREDICTON
 
-  inline void PredictNoInsideCache(const SparseBatch::Inst &inst,
-                                   bool output_margin,
-                                   std::vector<float>& out_preds,
+
+  /*!
+  * \brief return one numeric features about xgboost
+  * \param nameStr name of the request
+  * \return 0 when success, -1 when failure happens
+  */
+  virtual double GetNumInfo(const std::string& nameStr) const;
+
+  inline void PredictNoInsideCache(const SparsePage::Inst &inst,
+								   bool output_margin,
+								   std::vector<bst_float>& out_preds,
                                    std::vector<float>& pred_buffer,
                                    std::vector<unsigned>& pred_counter,
-                                   unsigned ntree_limit = 0,
+                                   unsigned ntree_limit = 0,								   
 								   /*RegTree::FVec*/ void *void_thread_cache = 0) const;
-  inline void PredictOutputSize(const SparseBatch::Inst& inst,
-                                bool output_margin,
+
+  inline void PredictOutputSize(const SparsePage::Inst& inst,
                                 bst_ulong &out_size,
                                 bst_ulong &out_size_buffer,
                                 unsigned ntree_limit = 0) const;
-
-  void Learner::PredictNoInsideCacheLOG(const SparseBatch::Inst& inst, bool output_margin, const char *legend = "PredictNoInsideCache") const;
-  void Learner::PredictNoInsideCacheLOG2(std::vector<float> &out_preds, const char *legend = "PredictNoInsideCache") const;
 
   // END
 
@@ -215,11 +215,11 @@ class Learner : public rabit::Serializable {
 };
 
 // implementation of inline functions.
-inline void Learner::Predict(const SparseBatch::Inst& inst,
+inline void Learner::Predict(const SparsePage::Inst& inst,
                              bool output_margin,
-                             std::vector<bst_float>* out_preds,
+                             HostDeviceVector<bst_float>* out_preds,
                              unsigned ntree_limit) const {
-  gbm_->PredictInstance(inst, out_preds, ntree_limit);
+  gbm_->PredictInstance(inst, &out_preds->HostVector(), ntree_limit);
   if (!output_margin) {
     obj_->PredTransform(out_preds);
   }
@@ -228,26 +228,30 @@ inline void Learner::Predict(const SparseBatch::Inst& inst,
 
 /// ADDITION FOR ONE OFF PREDICTION
 
-inline void Learner::PredictNoInsideCache(const SparseBatch::Inst& inst,
-                                          bool output_margin,
-                                          std::vector<float>& out_preds,
+inline void Learner::PredictNoInsideCache(const SparsePage::Inst& inst,
+										  bool output_margin,
+										  std::vector<bst_float>& out_preds,
                                           std::vector<float> &pred_buffer,
                                           std::vector<unsigned> &pred_counter,
                                           unsigned ntree_limit,
 										  /*RegTree::FVec*/ void *void_thread_cache) const {
   size_t t = out_preds.size();
-  gbm_->PredictNoInsideCache(inst, out_preds, pred_buffer, pred_counter, ntree_limit, 0, void_thread_cache);
+  gbm_->PredictNoInsideCache(inst, output_margin, out_preds, pred_buffer, 
+							 pred_counter, ntree_limit, 0, void_thread_cache);
 
   CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
   if (!output_margin) {
     t = out_preds.size();
-    obj_->PredTransform(&out_preds);
+	HostDeviceVector<float> host_pred(out_preds);
+    obj_->PredTransform(&host_pred);
+	// The copy should be avoided.
+	auto values = host_pred.HostVector();
+	std::copy(values.begin(), values.end(), out_preds.begin());
     CHECK(out_preds.size() == t) << "Size of the output was changed. Check the implementation.";
   }
 }
 
-inline void Learner::PredictOutputSize(const SparseBatch::Inst& inst,
-                                      bool output_margin,
+inline void Learner::PredictOutputSize(const SparsePage::Inst& inst,
                                       bst_ulong& out_size,
                                       bst_ulong& out_size_buffer,
                                       unsigned ntree_limit) const {

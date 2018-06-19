@@ -71,11 +71,29 @@ trait GeneralParams extends Params {
   val missing = new FloatParam(this, "missing", "the value treated as missing")
 
   /**
-    * the interval to check whether total numCores is no smaller than nWorkers. default: 30 minutes
+    * the maximum time to wait for the job requesting new workers. default: 30 minutes
     */
   val timeoutRequestWorkers = new LongParam(this, "timeout_request_workers", "the maximum time to" +
     " request new Workers if numCores are insufficient. The timeout will be disabled if this" +
     " value is set smaller than or equal to 0.")
+
+  /**
+    * The hdfs folder to load and save checkpoint boosters. default: `empty_string`
+    */
+  val checkpointPath = new Param[String](this, "checkpoint_path", "the hdfs folder to load and " +
+    "save checkpoints. If there are existing checkpoints in checkpoint_path. The job will load " +
+    "the checkpoint with highest version as the starting point for training. If " +
+    "checkpoint_interval is also set, the job will save a checkpoint every a few rounds.")
+
+  /**
+    * Param for set checkpoint interval (&gt;= 1) or disable checkpoint (-1). E.g. 10 means that
+    * the trained model will get checkpointed every 10 iterations. Note: `checkpoint_path` must
+    * also be set if the checkpoint interval is greater than 0.
+    */
+  val checkpointInterval: IntParam = new IntParam(this, "checkpointInterval", "set checkpoint " +
+    "interval (>= 1) or disable checkpoint (-1). E.g. 10 means that the trained model will get " +
+    "checkpointed every 10 iterations. Note: `checkpoint_path` must also be set if the checkpoint" +
+    " interval is greater than 0.", (interval: Int) => interval == -1 || interval >= 1)
 
   /**
     * Rabit tracker configurations. The parameter must be provided as an instance of the
@@ -112,6 +130,7 @@ trait GeneralParams extends Params {
   setDefault(round -> 1, nWorkers -> 1, numThreadPerTask -> 1,
     useExternalMemory -> false, silent -> 0,
     customObj -> null, customEval -> null, missing -> Float.NaN,
-    trackerConf -> TrackerConf(), seed -> 0, timeoutRequestWorkers -> 30 * 60 * 1000L
+    trackerConf -> TrackerConf(), seed -> 0, timeoutRequestWorkers -> 30 * 60 * 1000L,
+    checkpointPath -> "", checkpointInterval -> -1
   )
 }

@@ -10,6 +10,22 @@ if [ ${TASK} == "lint" ]; then
     echo "----------------------------"
     (cat logclean.txt|grep warning) && exit -1
     (cat logclean.txt|grep error) && exit -1
+
+    # Rename cuda files for static analysis
+    for file in  $(find src -name '*.cu'); do
+        cp "$file" "${file/.cu/_tmp.cc}"
+    done
+
+    echo "Running clang tidy..."
+    header_filter='(xgboost\/src|xgboost\/include)'
+    for filename in $(find src -name '*.cc'); do
+	    clang-tidy $filename -header-filter=$header_filter -- -Iinclude -Idmlc-core/include -Irabit/include -std=c++11 >> logtidy.txt
+    done
+
+    echo "---------clang-tidy failures----------"
+    # Fail only on warnings related to XGBoost source files
+    (cat logtidy.txt|grep -E 'xgboost.*warning'|grep -v dmlc-core) && exit -1
+    echo "----------------------------"
     exit 0
 fi
 
@@ -103,7 +119,7 @@ if [ ${TASK} == "cmake_test" ]; then
 
     # Build/test without AVX
     mkdir build && cd build
-    cmake .. -DGOOGLE_TEST=ON 
+    cmake .. -DGOOGLE_TEST=ON -DGTEST_ROOT=../gtest/
     make
     cd ..
     ./testxgboost
@@ -111,7 +127,7 @@ if [ ${TASK} == "cmake_test" ]; then
     
     # Build/test with AVX
     mkdir build && cd build
-    cmake .. -DGOOGLE_TEST=ON -DUSE_AVX=ON
+    cmake .. -DGOOGLE_TEST=ON -DUSE_AVX=ON -DGTEST_ROOT=../gtest/
     make
     cd ..
     ./testxgboost

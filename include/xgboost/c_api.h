@@ -30,18 +30,16 @@ typedef uint64_t bst_ulong;  // NOLINT(*)
 
 
 /*! \brief handle to DMatrix */
-typedef void *DMatrixHandle;
+typedef void *DMatrixHandle;  // NOLINT(*)
 /*! \brief handle to Booster */
-typedef void *BoosterHandle;
+typedef void *BoosterHandle;  // NOLINT(*)
 /*! \brief handle to a data iterator */
-typedef void *DataIterHandle;
+typedef void *DataIterHandle;  // NOLINT(*)
 /*! \brief handle to a internal data holder. */
-typedef void *DataHolderHandle;
-/*! \brief handle to a internal data holder. */
-typedef void *ArrayHandle;
+typedef void *DataHolderHandle;  // NOLINT(*)
 
 /*! \brief Mini batch used in XGBoost Data Iteration */
-typedef struct {
+typedef struct {  // NOLINT(*)
   /*! \brief number of rows in the minibatch */
   size_t size;
   /*! \brief row pointer to the rows in the data */
@@ -68,7 +66,7 @@ typedef struct {
  * \param handle The handle to the callback.
  * \param batch The data content to be set.
  */
-XGB_EXTERN_C typedef int XGBCallbackSetData(
+XGB_EXTERN_C typedef int XGBCallbackSetData(  // NOLINT(*)
     DataHolderHandle handle, XGBoostBatchCSR batch);
 
 /*!
@@ -82,9 +80,8 @@ XGB_EXTERN_C typedef int XGBCallbackSetData(
  * \param set_function_handle The handle to be passed to set function.
  * \return 0 if we are reaching the end and batch is not returned.
  */
-XGB_EXTERN_C typedef int XGBCallbackDataIterNext(
-    DataIterHandle data_handle,
-    XGBCallbackSetData* set_function,
+XGB_EXTERN_C typedef int XGBCallbackDataIterNext(  // NOLINT(*)
+    DataIterHandle data_handle, XGBCallbackSetData *set_function,
     DataHolderHandle set_function_handle);
 
 /*!
@@ -97,7 +94,7 @@ XGB_EXTERN_C typedef int XGBCallbackDataIterNext(
  *  this function is thread safe and can be called by different thread
  * \return const char* error information
  */
-XGB_DLL const char *XGBGetLastError();
+XGB_DLL const char *XGBGetLastError(void);
 
 /*!
  * \brief load a data matrix
@@ -218,11 +215,9 @@ XGB_DLL int XGDMatrixCreateFromMat(const float *data,
  * \param nthread number of threads (up to maximum cores available, if <=0 use all cores)
  * \return 0 when success, -1 when failure happens
  */
-XGB_DLL int XGDMatrixCreateFromMat_omp(const float *data,
-                                       bst_ulong nrow,
-                                       bst_ulong ncol,
-                                       float missing,
-                                       DMatrixHandle *out,
+XGB_DLL int XGDMatrixCreateFromMat_omp(const float *data,  // NOLINT
+                                       bst_ulong nrow, bst_ulong ncol,
+                                       float missing, DMatrixHandle *out,
                                        int nthread);
 /*!
  * \brief create a new dmatrix from sliced content of existing matrix
@@ -335,7 +330,6 @@ XGB_DLL int XGDMatrixNumCol(DMatrixHandle handle,
 XGB_DLL int XGBoosterCreate(const DMatrixHandle dmats[],
                             bst_ulong len,
                             BoosterHandle *out);
-
 /*!
  * \brief free obj in handle
  * \param handle handle to be freed
@@ -518,6 +512,8 @@ XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
                                  const int * indices,
                                  float missing);
 
+/*! \brief handle to a internal data holder. */
+typedef void *ArrayVoidHandle;
 
 /*!
 * \brief return one numeric features about xgboost
@@ -526,7 +522,7 @@ XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
 * \param outNum numeric feature
 * \return 0 when success, -1 when failure happens
 */
-XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayHandle outNum, const char* nameStr);
+XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayVoidHandle outNum, const char* nameStr);
 
 //////////////////
 // END OF ADDITION

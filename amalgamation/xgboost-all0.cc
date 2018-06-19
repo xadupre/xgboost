@@ -53,10 +53,16 @@
 #include "../src/tree/updater_histmaker.cc"
 #include "../src/tree/updater_skmaker.cc"
 
+// linear
+#include "../src/linear/linear_updater.cc"
+#include "../src/linear/updater_coordinate.cc"
+#include "../src/linear/updater_shotgun.cc"
+
 // global
 #include "../src/learner.cc"
 #include "../src/logging.cc"
 #include "../src/common/common.cc"
+#include "../src/common/host_device_vector.cc"
 #include "../src/common/hist_util.cc"
 
 // c_api
