@@ -1,0 +1,242 @@
+#include <xgboost/tree_model.h>
+
+/////////////////////////////////////
+// ADDITION TO GET ONE OFF PREDICTION
+/////////////////////////////////////
+
+XGB_DLL int XGBoosterLazyInit(BoosterHandle handle) {
+  API_BEGIN();
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->LazyInit();
+  API_END();
+}
+
+XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
+                                  xgboost::bst_ulong * nb_entries,
+                                  const float * values,
+                                  const int * indices,
+                                  float missing)
+{
+  API_BEGIN();
+  SparseEntry * res = entries;
+  xgboost::bst_ulong new_count = *nb_entries;
+  bool nan_missing = common::CheckNAN(missing);
+  if (indices == NULL) {
+    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values) {
+      if (common::CheckNAN(*values)) {
+        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN"; 
+        --new_count;
+      }
+      else {
+        if (nan_missing || *values != missing) {
+          res->fvalue = *values;
+          res->index = i;
+          ++res;
+        }
+        else --new_count;
+      }
+    }
+  }
+  else {
+    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values, ++indices) {
+      if (common::CheckNAN(*values)) {
+        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN";
+        --new_count;
+      }
+      else {
+        if (nan_missing || *values != missing) {
+          res->fvalue = *values;
+          res->index = *indices;
+          ++res;
+        }
+        else --new_count;
+      }
+    }
+  }
+  *nb_entries = new_count;
+  API_END();
+}
+
+
+#if __GNUC__ || __MINGW32__ || __MINGW64__
+
+template <typename T>
+class vector_stale : public std::vector<T>
+{
+	// Must be improved on linux.
+	// STL implementation is different.
+};
+
+#else
+/**
+* This class creates a stale vector pointing to the pointer given
+* to the constructor. It is means to be initialized with a pointer allocated
+* by a user based on the size returned by XGBoosterPredictOutputSize.
+* This code is not safe as it crashes if the vector is modified during the prediction.
+* It could be avoided but an extra allocation would be required.
+*/
+template <typename T>
+class vector_stale : public std::vector<T>
+{
+  public:
+//#undef _MSC_VER 
+#if(_MSC_VER >= 1900)
+  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
+  {
+	  // We initialize the vector to a buffer,
+    // There should not be any allocation, resizing or deallocation.
+    // Otherwise the program crashes.
+    this->_Myfirst() = (T*)begin; 
+    this->_Myend() = (T*)begin + size;
+    this->_Mylast() = (T*)this->_Myend();
+  }
+  ~vector_stale()
+  {
+	this->_Myfirst() = NULL;
+	this->_Myend() = NULL;
+	this->_Mylast() = NULL;
+  }
+#elif(_MSC_VER)
+  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
+  {
+	  this->_Myfirst = (T*)begin;
+    this->_Myend = (T*)begin + size;
+    this->_Mylast = (T*)this->_Myend;
+  }
+  ~vector_stale()
+  {
+	this->_Myfirst = NULL;
+	this->_Myend = NULL;
+	this->_Mylast = NULL;
+}
+#else
+  vector_stale(const T* begin, xgboost::bst_ulong size) throw(): 
+	  std::vector<T>(begin, begin == NULL ? NULL : begin + (size_t)size)
+  {
+  }
+  ~vector_stale()
+  {
+  }
+#endif
+};
+#endif
+
+template<class InputIt, class OutputIt>
+OutputIt copy_custom(InputIt first, InputIt last, OutputIt d_first)
+{
+	if(d_first != NULL) {
+		while (first != last)
+			*d_first++ = *first++;
+	}
+	return d_first;
+}
+
+XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
+                                          const SparseEntry * entries,
+                                          xgboost::bst_ulong nb_entries,
+                                          int option_mask,
+                                          unsigned ntree_limit,
+                                          xgboost::bst_ulong len,
+                                          xgboost::bst_ulong len_buffer,
+                                          const float *out_result,
+                                          const float *pred_buffer,
+                                          const unsigned *pred_counter,
+										  const /*RegTree::FVec*/ void *regtreefvec) {
+  API_BEGIN();
+  DCHECK(entries != NULL) << "entries is null";
+  DCHECK(out_result != NULL) << "out_result is null";
+#if(_MSC_VER)
+  vector_stale<float> preds(out_result, len);
+  vector_stale<float> tpred_buffer(pred_buffer, len_buffer);
+  vector_stale<unsigned> tpred_counter(pred_counter, len_buffer);
+#else
+  std::vector<float> preds;
+  std::vector<float> tpred_buffer;
+  std::vector<unsigned> tpred_counter;
+  preds.assign(out_result, out_result + len);
+  if (pred_buffer != NULL)
+    tpred_buffer.assign(pred_buffer, pred_buffer + len_buffer);
+  if (pred_counter != NULL)
+	tpred_counter.assign(pred_counter, pred_counter + len_buffer);
+#endif
+  RegTree::FVec *regtreevecobj = (RegTree::FVec*) regtreefvec;
+  SparsePage::Inst inst((Entry*)entries, nb_entries);
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->learner()->PredictNoInsideCache( 
+    inst,
+    (option_mask & 1) != 0, 
+    preds, tpred_buffer, tpred_counter, ntree_limit, regtreevecobj);
+  // We check no pointer were deallocated.
+#if _MSC_VER
+  DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
+  DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
+  DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
+#else
+  copy_custom(preds.begin(), preds.end(), (float*)out_result);
+  copy_custom(tpred_buffer.begin(), tpred_buffer.end(), (float*)pred_buffer);
+  copy_custom(tpred_counter.begin(), tpred_counter.end(), (unsigned*)pred_counter);
+#endif
+  API_END();
+}
+
+XGB_DLL int XGBoosterPredictNoInsideCacheAllocate(int nb_features, /*RegTree::FVec*/ void** regtreefvec)
+{
+	API_BEGIN();
+	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
+	RegTree::FVec * buffer = new RegTree::FVec();
+	buffer->Init(nb_features);
+	*regtreefvec = (void*)buffer;
+	API_END();
+}
+
+XGB_DLL int XGBoosterPredictNoInsideCacheFree(/*RegTree::FVec*/ void* regtreefvec)
+{
+	API_BEGIN();
+	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
+	RegTree::FVec * buffer = (RegTree::FVec*)regtreefvec;
+	delete buffer;
+	API_END();
+}
+
+XGB_DLL int XGBoosterPredictOutputSize(BoosterHandle handle,
+                                          const SparseEntry * entries,
+                                          xgboost::bst_ulong nb_entries,
+                                        int option_mask,
+                                        unsigned ntree_limit,
+                                        xgboost::bst_ulong *len,
+                                        xgboost::bst_ulong *len_buffer) {
+  API_BEGIN();
+  std::vector<float> preds;
+  DCHECK(entries != NULL) << "entries is null";
+  SparsePage::Inst inst((Entry*)entries, nb_entries);
+  Booster *bst = static_cast<Booster*>(handle);
+  bst->learner()->PredictOutputSize(
+    inst,
+    *len,
+    *len_buffer,
+    ntree_limit);
+  API_END();
+}
+
+XGB_DLL int XGBoosterNumInfo(BoosterHandle handle, ArrayVoidHandle outNum, const char* nameStr)
+{
+	API_BEGIN();
+	Booster *bst = static_cast<Booster*>(handle);
+	double *dout = (double*)outNum;
+	*dout = bst->learner()->GetNumInfo(nameStr);
+	API_END();
+}
+
+XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayVoidHandle outNum, const char* nameStr)
+{
+	API_BEGIN();
+	Booster *bst = static_cast<Booster*>(handle);
+	double *dout = (double*)outNum;
+	*dout = bst->learner()->GetNumInfo(nameStr);
+	API_END();
+}
+
+
+//////////////////
+// END OF ADDITION
+//////////////////

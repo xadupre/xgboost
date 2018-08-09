@@ -4,7 +4,6 @@
 #include <xgboost/learner.h>
 #include <xgboost/c_api.h>
 #include <xgboost/logging.h>
-#include <xgboost/tree_model.h>
 #include <dmlc/thread_local.h>
 #include <rabit/rabit.h>
 #include <cstdio>
@@ -142,6 +141,8 @@ class NativeDataIter : public dmlc::Parser<uint32_t> {
     block_.offset = dmlc::BeginPtr(offset_);
     block_.label = dmlc::BeginPtr(label_);
     block_.weight = dmlc::BeginPtr(weight_);
+    block_.qid = nullptr;
+    block_.field = nullptr;
     block_.index = dmlc::BeginPtr(index_);
     block_.value = dmlc::BeginPtr(value_);
     bytes_read_ += offset_.size() * sizeof(size_t) +
@@ -193,23 +194,32 @@ struct XGBAPIThreadLocalEntry {
   /*! \brief result holder for returning string pointers */
   std::vector<const char *> ret_vec_charp;
   /*! \brief returning float vector. */
-  HostDeviceVector<bst_float> ret_vec_float;
+  std::vector<bst_float> ret_vec_float;
   /*! \brief temp variable of gradient pairs. */
-  HostDeviceVector<GradientPair> tmp_gpair;
+  std::vector<GradientPair> tmp_gpair;
 };
 
 // define the threadlocal store.
 using XGBAPIThreadLocalStore = dmlc::ThreadLocalStore<XGBAPIThreadLocalEntry>;
 
+int XGBRegisterLogCallback(void (*callback)(const char*)) {
+  API_BEGIN();
+  LogCallbackRegistry* registry = LogCallbackRegistryStore::Get();
+  registry->Register(callback);
+  API_END();
+}
+
 int XGDMatrixCreateFromFile(const char *fname,
                             int silent,
                             DMatrixHandle *out) {
   API_BEGIN();
+  bool load_row_split = false;
   if (rabit::IsDistributed()) {
     LOG(CONSOLE) << "XGBoost distributed mode detected, "
                  << "will split data among workers";
+    load_row_split = true;
   }
-  *out = new std::shared_ptr<DMatrix>(DMatrix::Load(fname, silent != 0, true));
+  *out = new std::shared_ptr<DMatrix>(DMatrix::Load(fname, silent != 0, load_row_split));
   API_END();
 }
 
@@ -322,7 +332,12 @@ XGB_DLL int XGDMatrixCreateFromCSCEx(const size_t* col_ptr,
   mat.info.num_row_ = mat.page_.offset.size() - 1;
   if (num_row > 0) {
     CHECK_LE(mat.info.num_row_, num_row);
+    // provision for empty rows at the bottom of matrix
+    for (uint64_t i = mat.info.num_row_; i < static_cast<uint64_t>(num_row); ++i) {
+      mat.page_.offset.push_back(mat.page_.offset.back());
+    }
     mat.info.num_row_ = num_row;
+    CHECK_EQ(mat.info.num_row_, mat.page_.offset.size() - 1);  // sanity check
   }
   mat.info.num_col_ = ncol;
   mat.info.num_nonzero_ = nelem;
@@ -651,6 +666,7 @@ XGB_DLL int XGDMatrixSliceDMatrix(DMatrixHandle handle,
   std::unique_ptr<data::SimpleCSRSource> source(new data::SimpleCSRSource());
 
   API_BEGIN();
+  CHECK_HANDLE();
   data::SimpleCSRSource src;
   src.CopyFrom(static_cast<std::shared_ptr<DMatrix>*>(handle)->get());
   data::SimpleCSRSource& ret = *source;
@@ -695,6 +711,7 @@ XGB_DLL int XGDMatrixSliceDMatrix(DMatrixHandle handle,
 
 XGB_DLL int XGDMatrixFree(DMatrixHandle handle) {
   API_BEGIN();
+  CHECK_HANDLE();
   delete static_cast<std::shared_ptr<DMatrix>*>(handle);
   API_END();
 }
@@ -703,6 +720,7 @@ XGB_DLL int XGDMatrixSaveBinary(DMatrixHandle handle,
                                 const char* fname,
                                 int silent) {
   API_BEGIN();
+  CHECK_HANDLE();
   static_cast<std::shared_ptr<DMatrix>*>(handle)->get()->SaveToLocalFile(fname);
   API_END();
 }
@@ -712,6 +730,7 @@ XGB_DLL int XGDMatrixSetFloatInfo(DMatrixHandle handle,
                           const bst_float* info,
                           xgboost::bst_ulong len) {
   API_BEGIN();
+  CHECK_HANDLE();
   static_cast<std::shared_ptr<DMatrix>*>(handle)
       ->get()->Info().SetInfo(field, info, kFloat32, len);
   API_END();
@@ -722,6 +741,7 @@ XGB_DLL int XGDMatrixSetUIntInfo(DMatrixHandle handle,
                          const unsigned* info,
                          xgboost::bst_ulong len) {
   API_BEGIN();
+  CHECK_HANDLE();
   static_cast<std::shared_ptr<DMatrix>*>(handle)
       ->get()->Info().SetInfo(field, info, kUInt32, len);
   API_END();
@@ -731,6 +751,7 @@ XGB_DLL int XGDMatrixSetGroup(DMatrixHandle handle,
                               const unsigned* group,
                               xgboost::bst_ulong len) {
   API_BEGIN();
+  CHECK_HANDLE();
   auto *pmat = static_cast<std::shared_ptr<DMatrix>*>(handle);
   MetaInfo& info = pmat->get()->Info();
   info.group_ptr_.resize(len + 1);
@@ -746,6 +767,7 @@ XGB_DLL int XGDMatrixGetFloatInfo(const DMatrixHandle handle,
                                   xgboost::bst_ulong* out_len,
                                   const bst_float** out_dptr) {
   API_BEGIN();
+  CHECK_HANDLE();
   const MetaInfo& info = static_cast<std::shared_ptr<DMatrix>*>(handle)->get()->Info();
   const std::vector<bst_float>* vec = nullptr;
   if (!std::strcmp(field, "label")) {
@@ -767,6 +789,7 @@ XGB_DLL int XGDMatrixGetUIntInfo(const DMatrixHandle handle,
                                  xgboost::bst_ulong *out_len,
                                  const unsigned **out_dptr) {
   API_BEGIN();
+  CHECK_HANDLE();
   const MetaInfo& info = static_cast<std::shared_ptr<DMatrix>*>(handle)->get()->Info();
   const std::vector<unsigned>* vec = nullptr;
   if (!std::strcmp(field, "root_index")) {
@@ -782,6 +805,7 @@ XGB_DLL int XGDMatrixGetUIntInfo(const DMatrixHandle handle,
 XGB_DLL int XGDMatrixNumRow(const DMatrixHandle handle,
                             xgboost::bst_ulong *out) {
   API_BEGIN();
+  CHECK_HANDLE();
   *out = static_cast<xgboost::bst_ulong>(
       static_cast<std::shared_ptr<DMatrix>*>(handle)->get()->Info().num_row_);
   API_END();
@@ -790,6 +814,7 @@ XGB_DLL int XGDMatrixNumRow(const DMatrixHandle handle,
 XGB_DLL int XGDMatrixNumCol(const DMatrixHandle handle,
                             xgboost::bst_ulong *out) {
   API_BEGIN();
+  CHECK_HANDLE();
   *out = static_cast<size_t>(
       static_cast<std::shared_ptr<DMatrix>*>(handle)->get()->Info().num_col_);
   API_END();
@@ -810,6 +835,7 @@ XGB_DLL int XGBoosterCreate(const DMatrixHandle dmats[],
 
 XGB_DLL int XGBoosterFree(BoosterHandle handle) {
   API_BEGIN();
+  CHECK_HANDLE();
   delete static_cast<Booster*>(handle);
   API_END();
 }
@@ -818,6 +844,7 @@ XGB_DLL int XGBoosterSetParam(BoosterHandle handle,
                               const char *name,
                               const char *value) {
   API_BEGIN();
+  CHECK_HANDLE();
   static_cast<Booster*>(handle)->SetParam(name, value);
   API_END();
 }
@@ -826,6 +853,7 @@ XGB_DLL int XGBoosterUpdateOneIter(BoosterHandle handle,
                                    int iter,
                                    DMatrixHandle dtrain) {
   API_BEGIN();
+  CHECK_HANDLE();
   auto* bst = static_cast<Booster*>(handle);
   auto *dtr =
       static_cast<std::shared_ptr<DMatrix>*>(dtrain);
@@ -840,8 +868,9 @@ XGB_DLL int XGBoosterBoostOneIter(BoosterHandle handle,
                                   bst_float *grad,
                                   bst_float *hess,
                                   xgboost::bst_ulong len) {
-  HostDeviceVector<GradientPair>& tmp_gpair = XGBAPIThreadLocalStore::Get()->tmp_gpair;
+  HostDeviceVector<GradientPair> tmp_gpair;
   API_BEGIN();
+  CHECK_HANDLE();
   auto* bst = static_cast<Booster*>(handle);
   auto* dtr =
       static_cast<std::shared_ptr<DMatrix>*>(dtrain);
@@ -864,6 +893,7 @@ XGB_DLL int XGBoosterEvalOneIter(BoosterHandle handle,
                                  const char** out_str) {
   std::string& eval_str = XGBAPIThreadLocalStore::Get()->ret_str;
   API_BEGIN();
+  CHECK_HANDLE();
   auto* bst = static_cast<Booster*>(handle);
   std::vector<DMatrix*> data_sets;
   std::vector<std::string> data_names;
@@ -885,267 +915,32 @@ XGB_DLL int XGBoosterPredict(BoosterHandle handle,
                              unsigned ntree_limit,
                              xgboost::bst_ulong *len,
                              const bst_float **out_result) {
-  HostDeviceVector<bst_float>& preds =
+  std::vector<bst_float>&preds =
     XGBAPIThreadLocalStore::Get()->ret_vec_float;
   API_BEGIN();
+  CHECK_HANDLE();
   auto *bst = static_cast<Booster*>(handle);
   bst->LazyInit();
+  HostDeviceVector<bst_float> tmp_preds;
   bst->learner()->Predict(
       static_cast<std::shared_ptr<DMatrix>*>(dmat)->get(),
       (option_mask & 1) != 0,
-      &preds, ntree_limit,
+      &tmp_preds, ntree_limit,
       (option_mask & 2) != 0,
       (option_mask & 4) != 0,
       (option_mask & 8) != 0,
       (option_mask & 16) != 0);
-  *out_result = dmlc::BeginPtr(preds.HostVector());
-  *len = static_cast<xgboost::bst_ulong>(preds.Size());
+  preds = tmp_preds.HostVector();
+  *out_result = dmlc::BeginPtr(preds);
+  *len = static_cast<xgboost::bst_ulong>(preds.size());
   API_END();
 }
 
-/////////////////////////////////////
-// ADDITION TO GET ONE OFF PREDICTION
-/////////////////////////////////////
-
-XGB_DLL int XGBoosterLazyInit(BoosterHandle handle) {
-  API_BEGIN();
-  Booster *bst = static_cast<Booster*>(handle);
-  bst->LazyInit();
-  API_END();
-}
-
-XGB_DLL int XGBoosterCopyEntries(SparseEntry * entries,
-                                  xgboost::bst_ulong * nb_entries,
-                                  const float * values,
-                                  const int * indices,
-                                  float missing)
-{
-  API_BEGIN();
-  SparseEntry * res = entries;
-  xgboost::bst_ulong new_count = *nb_entries;
-  bool nan_missing = common::CheckNAN(missing);
-  if (indices == NULL) {
-    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values) {
-      if (common::CheckNAN(*values)) {
-        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN"; 
-        --new_count;
-      }
-      else {
-        if (nan_missing || *values != missing) {
-          res->fvalue = *values;
-          res->index = i;
-          ++res;
-        }
-        else --new_count;
-      }
-    }
-  }
-  else {
-    for (xgboost::bst_ulong i = 0; i < *nb_entries; ++i, ++values, ++indices) {
-      if (common::CheckNAN(*values)) {
-        CHECK(nan_missing) << "There are NAN in the matrix, however, you did not set missing=NAN";
-        --new_count;
-      }
-      else {
-        if (nan_missing || *values != missing) {
-          res->fvalue = *values;
-          res->index = *indices;
-          ++res;
-        }
-        else --new_count;
-      }
-    }
-  }
-  *nb_entries = new_count;
-  API_END();
-}
-
-
-#if __GNUC__ || __MINGW32__ || __MINGW64__
-
-template <typename T>
-class vector_stale : public std::vector<T>
-{
-	// Must be improved on linux.
-	// STL implementation is different.
-};
-
-#else
-/**
-* This class creates a stale vector pointing to the pointer given
-* to the constructor. It is means to be initialized with a pointer allocated
-* by a user based on the size returned by XGBoosterPredictOutputSize.
-* This code is not safe as it crashes if the vector is modified during the prediction.
-* It could be avoided but an extra allocation would be required.
-*/
-template <typename T>
-class vector_stale : public std::vector<T>
-{
-  public:
-//#undef _MSC_VER 
-#if(_MSC_VER >= 1900)
-  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
-  {
-	  // We initialize the vector to a buffer,
-    // There should not be any allocation, resizing or deallocation.
-    // Otherwise the program crashes.
-    this->_Myfirst() = (T*)begin; 
-    this->_Myend() = (T*)begin + size;
-    this->_Mylast() = (T*)this->_Myend();
-  }
-  ~vector_stale()
-  {
-	this->_Myfirst() = NULL;
-	this->_Myend() = NULL;
-	this->_Mylast() = NULL;
-  }
-#elif(_MSC_VER)
-  vector_stale(const T* begin, size_type size) throw() : std::vector<T>()
-  {
-	  this->_Myfirst = (T*)begin;
-    this->_Myend = (T*)begin + size;
-    this->_Mylast = (T*)this->_Myend;
-  }
-  ~vector_stale()
-  {
-	this->_Myfirst = NULL;
-	this->_Myend = NULL;
-	this->_Mylast = NULL;
-}
-#else
-  vector_stale(const T* begin, xgboost::bst_ulong size) throw(): 
-	  std::vector<T>(begin, begin == NULL ? NULL : begin + (size_t)size)
-  {
-  }
-  ~vector_stale()
-  {
-  }
-#endif
-};
-#endif
-
-template<class InputIt, class OutputIt>
-OutputIt copy_custom(InputIt first, InputIt last, OutputIt d_first)
-{
-	if(d_first != NULL) {
-		while (first != last)
-			*d_first++ = *first++;
-	}
-	return d_first;
-}
-
-XGB_DLL int XGBoosterPredictNoInsideCache(BoosterHandle handle,
-                                          const SparseEntry * entries,
-                                          xgboost::bst_ulong nb_entries,
-                                          int option_mask,
-                                          unsigned ntree_limit,
-                                          xgboost::bst_ulong len,
-                                          xgboost::bst_ulong len_buffer,
-                                          const float *out_result,
-                                          const float *pred_buffer,
-                                          const unsigned *pred_counter,
-										  const /*RegTree::FVec*/ void *regtreefvec) {
-  API_BEGIN();
-  DCHECK(entries != NULL) << "entries is null";
-  DCHECK(out_result != NULL) << "out_result is null";
-#if(_MSC_VER)
-  vector_stale<float> preds(out_result, len);
-  vector_stale<float> tpred_buffer(pred_buffer, len_buffer);
-  vector_stale<unsigned> tpred_counter(pred_counter, len_buffer);
-#else
-  std::vector<float> preds;
-  std::vector<float> tpred_buffer;
-  std::vector<unsigned> tpred_counter;
-  preds.assign(out_result, out_result + len);
-  if (pred_buffer != NULL)
-    tpred_buffer.assign(pred_buffer, pred_buffer + len_buffer);
-  if (pred_counter != NULL)
-	tpred_counter.assign(pred_counter, pred_counter + len_buffer);
-#endif
-  RegTree::FVec *regtreevecobj = (RegTree::FVec*) regtreefvec;
-  SparsePage::Inst inst((Entry*)entries, nb_entries);
-  Booster *bst = static_cast<Booster*>(handle);
-  bst->learner()->PredictNoInsideCache( 
-    inst,
-    (option_mask & 1) != 0, 
-    preds, tpred_buffer, tpred_counter, ntree_limit, regtreevecobj);
-  // We check no pointer were deallocated.
-#if _MSC_VER
-  DCHECK(dmlc::BeginPtr(preds) == out_result) << "The prediction vector was resized or deallocating.";
-  DCHECK(dmlc::BeginPtr(tpred_buffer) == pred_buffer) << "The pred_buffer vector was resized or deallocating.";
-  DCHECK(dmlc::BeginPtr(tpred_counter) == pred_counter) << "The pred_counter vector was resized or deallocating.";
-#else
-  copy_custom(preds.begin(), preds.end(), (float*)out_result);
-  copy_custom(tpred_buffer.begin(), tpred_buffer.end(), (float*)pred_buffer);
-  copy_custom(tpred_counter.begin(), tpred_counter.end(), (unsigned*)pred_counter);
-#endif
-  API_END();
-}
-
-XGB_DLL int XGBoosterPredictNoInsideCacheAllocate(int nb_features, /*RegTree::FVec*/ void** regtreefvec)
-{
-	API_BEGIN();
-	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
-	RegTree::FVec * buffer = new RegTree::FVec();
-	buffer->Init(nb_features);
-	*regtreefvec = (void*)buffer;
-	API_END();
-}
-
-XGB_DLL int XGBoosterPredictNoInsideCacheFree(/*RegTree::FVec*/ void* regtreefvec)
-{
-	API_BEGIN();
-	DCHECK(regtreefvec != NULL) << "regtreevec cannot be null";
-	RegTree::FVec * buffer = (RegTree::FVec*)regtreefvec;
-	delete buffer;
-	API_END();
-}
-
-XGB_DLL int XGBoosterPredictOutputSize(BoosterHandle handle,
-                                          const SparseEntry * entries,
-                                          xgboost::bst_ulong nb_entries,
-                                        int option_mask,
-                                        unsigned ntree_limit,
-                                        xgboost::bst_ulong *len,
-                                        xgboost::bst_ulong *len_buffer) {
-  API_BEGIN();
-  std::vector<float> preds;
-  DCHECK(entries != NULL) << "entries is null";
-  SparsePage::Inst inst((Entry*)entries, nb_entries);
-  Booster *bst = static_cast<Booster*>(handle);
-  bst->learner()->PredictOutputSize(
-    inst,
-    *len,
-    *len_buffer,
-    ntree_limit);
-  API_END();
-}
-
-XGB_DLL int XGBoosterNumInfo(BoosterHandle handle, ArrayVoidHandle outNum, const char* nameStr)
-{
-	API_BEGIN();
-	Booster *bst = static_cast<Booster*>(handle);
-	double *dout = (double*)outNum;
-	*dout = bst->learner()->GetNumInfo(nameStr);
-	API_END();
-}
-
-XGB_DLL int XGBoosterGetNumInfoTest(BoosterHandle handle, ArrayVoidHandle outNum, const char* nameStr)
-{
-	API_BEGIN();
-	Booster *bst = static_cast<Booster*>(handle);
-	double *dout = (double*)outNum;
-	*dout = bst->learner()->GetNumInfo(nameStr);
-	API_END();
-}
-
-
-//////////////////
-// END OF ADDITION
-//////////////////
+#include "c_api_extended.cch"
 
 XGB_DLL int XGBoosterLoadModel(BoosterHandle handle, const char* fname) {
   API_BEGIN();
+  CHECK_HANDLE();
   std::unique_ptr<dmlc::Stream> fi(dmlc::Stream::Create(fname, "r"));
   static_cast<Booster*>(handle)->LoadModel(fi.get());
   API_END();
@@ -1153,6 +948,7 @@ XGB_DLL int XGBoosterLoadModel(BoosterHandle handle, const char* fname) {
 
 XGB_DLL int XGBoosterSaveModel(BoosterHandle handle, const char* fname) {
   API_BEGIN();
+  CHECK_HANDLE();
   std::unique_ptr<dmlc::Stream> fo(dmlc::Stream::Create(fname, "w"));
   auto *bst = static_cast<Booster*>(handle);
   bst->LazyInit();
@@ -1164,6 +960,7 @@ XGB_DLL int XGBoosterLoadModelFromBuffer(BoosterHandle handle,
                                  const void* buf,
                                  xgboost::bst_ulong len) {
   API_BEGIN();
+  CHECK_HANDLE();
   common::MemoryFixSizeBuffer fs((void*)buf, len);  // NOLINT(*)
   static_cast<Booster*>(handle)->LoadModel(&fs);
   API_END();
@@ -1176,6 +973,7 @@ XGB_DLL int XGBoosterGetModelRaw(BoosterHandle handle,
   raw_str.resize(0);
 
   API_BEGIN();
+  CHECK_HANDLE();
   common::MemoryBufferStream fo(&raw_str);
   auto *bst = static_cast<Booster*>(handle);
   bst->LazyInit();
@@ -1218,6 +1016,7 @@ XGB_DLL int XGBoosterDumpModelEx(BoosterHandle handle,
                        xgboost::bst_ulong* len,
                        const char*** out_models) {
   API_BEGIN();
+  CHECK_HANDLE();
   FeatureMap featmap;
   if (strlen(fmap) != 0) {
     std::unique_ptr<dmlc::Stream> fs(
@@ -1248,6 +1047,7 @@ XGB_DLL int XGBoosterDumpModelExWithFeatures(BoosterHandle handle,
                                    xgboost::bst_ulong* len,
                                    const char*** out_models) {
   API_BEGIN();
+  CHECK_HANDLE();
   FeatureMap featmap;
   for (int i = 0; i < fnum; ++i) {
     featmap.PushBack(i, fname[i], ftype[i]);
@@ -1263,6 +1063,7 @@ XGB_DLL int XGBoosterGetAttr(BoosterHandle handle,
   auto* bst = static_cast<Booster*>(handle);
   std::string& ret_str = XGBAPIThreadLocalStore::Get()->ret_str;
   API_BEGIN();
+  CHECK_HANDLE();
   if (bst->learner()->GetAttr(key, &ret_str)) {
     *out = ret_str.c_str();
     *success = 1;
@@ -1278,6 +1079,7 @@ XGB_DLL int XGBoosterSetAttr(BoosterHandle handle,
                      const char* value) {
   auto* bst = static_cast<Booster*>(handle);
   API_BEGIN();
+  CHECK_HANDLE();
   if (value == nullptr) {
     bst->learner()->DelAttr(key);
   } else {
@@ -1293,6 +1095,7 @@ XGB_DLL int XGBoosterGetAttrNames(BoosterHandle handle,
   std::vector<const char*>& charp_vecs = XGBAPIThreadLocalStore::Get()->ret_vec_charp;
   auto *bst = static_cast<Booster*>(handle);
   API_BEGIN();
+  CHECK_HANDLE();
   str_vecs = bst->learner()->GetAttrNames();
   charp_vecs.resize(str_vecs.size());
   for (size_t i = 0; i < str_vecs.size(); ++i) {
@@ -1306,6 +1109,7 @@ XGB_DLL int XGBoosterGetAttrNames(BoosterHandle handle,
 XGB_DLL int XGBoosterLoadRabitCheckpoint(BoosterHandle handle,
                                  int* version) {
   API_BEGIN();
+  CHECK_HANDLE();
   auto* bst = static_cast<Booster*>(handle);
   *version = rabit::LoadCheckPoint(bst->learner());
   if (*version != 0) {
@@ -1316,6 +1120,7 @@ XGB_DLL int XGBoosterLoadRabitCheckpoint(BoosterHandle handle,
 
 XGB_DLL int XGBoosterSaveRabitCheckpoint(BoosterHandle handle) {
   API_BEGIN();
+  CHECK_HANDLE();
   auto* bst = static_cast<Booster*>(handle);
   if (bst->learner()->AllowLazyCheckPoint()) {
     rabit::LazyCheckPoint(bst->learner());
