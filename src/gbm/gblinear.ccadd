@@ -1,0 +1,25 @@
+  void PredictNoInsideCache(const SparsePage::Inst& inst,
+	  bool output_margin,
+	  std::vector<bst_float>& out_preds,
+	  std::vector<float> &pred_buffer,
+	  std::vector<unsigned> &pred_counter,
+	  unsigned ntree_limit = 0,
+	  unsigned root_index = 0,
+	  /*RegTree::FVec*/ void *void_thread_cache = 0) override
+  {
+	  throw std::logic_error("Not implemented error.");
+  }
+
+  void PredictOutputSize(const SparsePage::Inst& inst,
+	  bst_ulong &out_size,
+	  bst_ulong &out_size_buffer,
+	  unsigned ntree_limit = 0,
+	  unsigned root_index = 0) override
+  {
+	  throw std::logic_error("Not implemented error.");
+  }
+
+  double GetNumInfo(const std::string &nameStr) const override
+  {
+	  throw std::logic_error("Not implemented error.");
+  }

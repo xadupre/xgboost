@@ -1,0 +1,25 @@
+  double GetNumInfo(const std::string &nameStr) const override
+  {
+	  return model_.GetNumInfo(nameStr);
+  }
+
+  void PredictNoInsideCache(const SparsePage::Inst &inst,
+							bool output_margin,
+							std::vector<bst_float>& out_preds,
+                            std::vector<float>& pred_buffer,
+                            std::vector<unsigned> &pred_counter,
+                            unsigned ntree_limit,
+                            unsigned root_index,
+                            /*RegTree::FVec*/ void *void_thread_cache) override {
+    return predictor_->PredictNoInsideCache(inst, out_preds, pred_buffer,
+											pred_counter, model_, ntree_limit, root_index,
+											void_thread_cache);
+  }
+
+  void PredictOutputSize(const SparsePage::Inst &inst,
+                         xgboost::bst_ulong &len,
+                         xgboost::bst_ulong& out_size_buffer,
+                         unsigned ntree_limit,
+                         unsigned root_index) override {
+    return predictor_->PredictOutputSize(inst, len, out_size_buffer, model_, ntree_limit, root_index);
+  }
